@@ -66,6 +66,11 @@ on:
         type: choice
         options: [none, xxksu, ksu-next, ksu-original]
         default: none
+      KSU_ENABLE_MODULES:
+        description: "Hanya ksu-next/original: izinkan mengaktifkan CONFIG_MODULES (dibutuhkan KPROBES). Mengubah kernel, berisiko"
+        required: false
+        type: boolean
+        default: false
       MANAGER_AUTO:
         description: "Sertakan APK manager yang cocok dengan varian KSU di atas"
         required: true
@@ -127,6 +132,7 @@ jobs:
       CLANG_CUSTOM_URL: ${{ inputs.CLANG_CUSTOM_URL }}
       CLANG_CUSTOM_BRANCH: ${{ inputs.CLANG_CUSTOM_BRANCH }}
       KSU_VARIANT: ${{ inputs.KSU_VARIANT }}
+      KSU_ENABLE_MODULES: ${{ inputs.KSU_ENABLE_MODULES }}
       MANAGER_AUTO: ${{ inputs.MANAGER_AUTO }}
       MGR_ORIGINAL_LATEST: ${{ inputs.MGR_ORIGINAL_LATEST }}
       MGR_NEXT: ${{ inputs.MGR_NEXT }}
@@ -314,7 +320,18 @@ jobs:
               fi
               scripts/config --file "$OUT_DIR/.config" -d KSU_WITH_KPROBES -e KSU_TAMPER_SYSCALL_TABLE
             else
-              # ksu-next / ksu-original memakai kprobes
+              # ksu-next / ksu-original memakai kprobes; KPROBES di 4.19 butuh MODULES
+              if ! grep -q "^CONFIG_MODULES=y" "$OUT_DIR/.config"; then
+                if [ "$KSU_ENABLE_MODULES" = "true" ]; then
+                  echo "::warning::CONFIG_MODULES diaktifkan agar KPROBES bisa aktif (mengubah kernel dari config aslinya)"
+                  scripts/config --file "$OUT_DIR/.config" -e MODULES
+                else
+                  echo "::error::Varian $KSU_VARIANT butuh KPROBES, tapi KPROBES membutuhkan CONFIG_MODULES dan config ini tidak mengaktifkannya."
+                  echo "::error::Pilihan: (1) pakai KSU_VARIANT=xxksu (mode syscall-table, tanpa kprobes), atau (2) centang KSU_ENABLE_MODULES (mengubah kernel, risiko boot lebih tinggi)."
+                  exit 1
+                fi
+              fi
+              grep -q "^CONFIG_EXT4_FS=y" "$OUT_DIR/.config" || echo "::warning::CONFIG_EXT4_FS tidak =y; KSU butuh EXT4_FS"
               scripts/config --file "$OUT_DIR/.config" -e KPROBES -e KPROBE_EVENTS
             fi
           fi
@@ -337,8 +354,11 @@ jobs:
               grep -n "KSU" "$OUT_DIR/.config" || echo "(tidak ada sama sekali)"
               echo "--- definisi 'config KSU' di Kconfig (cari baris 'depends on')"
               grep -RhnE -B2 -A14 "^config KSU$" drivers/kernelsu/ KernelSU/ 2>/dev/null | head -n 60 || true
+              echo "--- varian: $KSU_VARIANT"
               echo "--- status dependensi yang umum"
-              grep -nE "^(# )?CONFIG_(KPROBES|KPROBE_EVENTS|OVERLAY_FS|MODULES|HAVE_KPROBES|KSU_[A-Z_]+)[ =]" "$OUT_DIR/.config" || true
+              grep -nE "^(# )?CONFIG_(KPROBES|KPROBE_EVENTS|OVERLAY_FS|EXT4_FS|MODULES|HAVE_KPROBES|KSU_[A-Z_]+)[ =]" "$OUT_DIR/.config" || true
+              echo "--- definisi KPROBES di arch/Kconfig"
+              grep -nE -A8 "^config KPROBES$" arch/Kconfig || true
               echo "::error::CONFIG_KSU tidak aktif: lihat 'depends on' di bagian DIAGNOSA di atas"
               exit 1
             fi
