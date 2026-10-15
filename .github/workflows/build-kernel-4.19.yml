@@ -15,6 +15,11 @@ on:
         description: "Defconfig name (no path, e.g. lavender_defconfig)"
         required: true
         type: string
+      KERNEL_FRAGMENT:
+        description: "Fragment config (opsional, mis. vendor/xiaomi/lavender.config)"
+        required: false
+        type: string
+        default: ""
       KERNEL_NAME:
         description: "Kernel name used for file naming (e.g. Sakura)"
         required: false
@@ -70,6 +75,7 @@ jobs:
       KERNEL_SOURCE: ${{ github.event.inputs.KERNEL_SOURCE }}
       KERNEL_BRANCH: ${{ github.event.inputs.KERNEL_BRANCH }}
       KERNEL_CONFIG: ${{ github.event.inputs.KERNEL_CONFIG }}
+      KERNEL_FRAGMENT: ${{ github.event.inputs.KERNEL_FRAGMENT }}
       KERNEL_NAME: ${{ github.event.inputs.KERNEL_NAME }}
       KERNEL_VERSION: ${{ github.event.inputs.KERNEL_VERSION }}
       CODENAME: ${{ github.event.inputs.CODENAME }}
@@ -248,6 +254,14 @@ jobs:
           fi
 
           make $COMMON_ARGS "$KERNEL_CONFIG"
+
+        if [ -n "$KERNEL_FRAGMENT" ]; then
+        scripts/kconfig/merge_config.sh -m -O out out/.config "arch/arm64/configs/$KERNEL_FRAGMENT"
+        fi
+
+        # Opsional: Thin LTO seperti script lokal-mu
+.        /scripts/config --file out/.config -e LTO_CLANG -e THINLTO
+
 
           # Fix for build.log: "ld: cannot represent machine `arm'" when linking
           # arch/arm64/kernel/vdso32/vdso.so.raw. This happens because the
