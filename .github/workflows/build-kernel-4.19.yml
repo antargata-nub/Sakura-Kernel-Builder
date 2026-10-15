@@ -255,13 +255,6 @@ jobs:
 
           make $COMMON_ARGS "$KERNEL_CONFIG"
 
-        if [ -n "$KERNEL_FRAGMENT" ]; then
-        scripts/kconfig/merge_config.sh -m -O out out/.config "arch/arm64/configs/$KERNEL_FRAGMENT"
-        fi
-
-        # Opsional: Thin LTO seperti script lokal-mu
-.        /scripts/config --file out/.config -e LTO_CLANG -e THINLTO
-
 
           # Fix for build.log: "ld: cannot represent machine `arm'" when linking
           # arch/arm64/kernel/vdso32/vdso.so.raw. This happens because the
