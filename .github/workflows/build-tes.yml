@@ -1,0 +1,145 @@
+name: Build Kernel Lavender
+
+on:
+  workflow_dispatch:
+    inputs:
+      lto:
+        description: "Mode LTO"
+        type: choice
+        default: thin
+        options: [thin, full, none]
+      extra_kcflags:
+        description: "KCFLAGS tambahan"
+        type: string
+        default: "-Wno-error"
+
+env:
+  KERNEL_REPO: pix106/android_kernel_xiaomi_sdm660_southwest-ng
+  KERNEL_BRANCH: old/main-dynamic
+  LLVM_VER: "20"
+  CFG_DIR: arch/arm64/configs/vendor/xiaomi
+  OUT_DIR: out
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout source kernel
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.KERNEL_REPO }}
+          ref: ${{ env.KERNEL_BRANCH }}
+          fetch-depth: 1
+
+      - name: Install dependensi
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex libssl-dev libelf-dev cpio zip \
+            python3 ccache git wget lsb-release software-properties-common gnupg \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+
+      - name: Install Clang ${{ env.LLVM_VER }}
+        run: |
+          wget -q https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh ${LLVM_VER} all
+          echo "/usr/lib/llvm-${LLVM_VER}/bin" >> "$GITHUB_PATH"
+
+      - name: Cek toolchain
+        run: |
+          clang --version | head -1
+          ld.lld --version
+          aarch64-linux-gnu-gcc --version | head -1
+          arm-linux-gnueabi-gcc --version | head -1
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ inputs.lto }}-${{ github.run_id }}
+          restore-keys: ccache-${{ inputs.lto }}-
+
+      - name: Build kernel
+        env:
+          LTO: ${{ inputs.lto }}
+          EXTRA_KCFLAGS: ${{ inputs.extra_kcflags }}
+        run: |
+          set -euo pipefail
+
+          BASE_CFG="$CFG_DIR/sdm660_defconfig"
+          FRAGMENT="$CFG_DIR/lavender.config"
+
+          for f in "$BASE_CFG" "$FRAGMENT"; do
+            [ -f "$f" ] || { echo "File tidak ada: $f"; exit 1; }
+          done
+
+          export ARCH=arm64 SUBARCH=arm64
+          MAKE_ARGS=(
+            O="$OUT_DIR" ARCH=arm64 SUBARCH=arm64
+            CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm
+            OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
+            CROSS_COMPILE=aarch64-linux-gnu-
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+            CLANG_TRIPLE=aarch64-linux-gnu-
+          )
+          if [ -n "$EXTRA_KCFLAGS" ]; then
+            MAKE_ARGS+=(KCFLAGS="$EXTRA_KCFLAGS")
+          fi
+
+          echo "Kernel : $(make -s kernelversion)"
+          echo "LTO    : $LTO"
+          mkdir -p "$OUT_DIR"
+
+          # 1. Merge config
+          scripts/kconfig/merge_config.sh -m -O "$OUT_DIR" "$BASE_CFG" "$FRAGMENT"
+
+          # 2. LTO
+          case "$LTO" in
+            thin) scripts/config --file "$OUT_DIR/.config" -e LTO_CLANG -e THINLTO ;;
+            full) scripts/config --file "$OUT_DIR/.config" -e LTO_CLANG -d THINLTO ;;
+            none) scripts/config --file "$OUT_DIR/.config" -d LTO_CLANG -d THINLTO ;;
+          esac
+
+          # 3. Finalisasi config + verifikasi
+          make "${MAKE_ARGS[@]}" olddefconfig
+          grep -E "^CONFIG_(LTO_CLANG|THINLTO|KPROBES|COMPAT_VDSO|MODULES)=" "$OUT_DIR/.config" || true
+
+          if [ "$LTO" = "thin" ] && ! grep -q "^CONFIG_THINLTO=y" "$OUT_DIR/.config"; then
+            echo "Thin LTO diminta tapi THINLTO tidak aktif"; exit 1
+          fi
+          if [ "$LTO" = "full" ] && ! grep -q "^CONFIG_LTO_CLANG=y" "$OUT_DIR/.config"; then
+            echo "Full LTO diminta tapi LTO_CLANG tidak aktif"; exit 1
+          fi
+
+          # 4. Kompilasi
+          make -j"$(nproc)" "${MAKE_ARGS[@]}" 2>&1 | tee build.log
+
+      - name: Kumpulkan hasil
+        id: pack
+        run: |
+          mkdir -p dist
+          for f in Image.gz-dtb Image.gz Image; do
+            if [ -f "$OUT_DIR/arch/arm64/boot/$f" ]; then
+              cp "$OUT_DIR/arch/arm64/boot/$f" dist/
+              echo "found=$f" >> "$GITHUB_OUTPUT"
+              break
+            fi
+          done
+          [ -n "$(ls dist)" ] || { echo "Image tidak ditemukan"; exit 1; }
+
+      - name: Upload kernel image
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-lavender-${{ inputs.lto }}
+          path: dist/*
+
+      - name: Upload log build
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
