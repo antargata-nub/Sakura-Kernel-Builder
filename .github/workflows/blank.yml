@@ -44,6 +44,22 @@ on:
         required: false
         type: string
         default: "-Wno-error"
+      COMPILER:
+        description: "Compiler (clang-20 = yang sudah terbukti jalan di build lokalmu)"
+        required: true
+        type: choice
+        options: [clang-22, clang-21, clang-20, clang-19, clang-18, clang-17, clang-16, clang-15, clang-14, custom]
+        default: clang-20
+      CLANG_CUSTOM_URL:
+        description: "Hanya untuk COMPILER=custom: URL arsip (.tar.gz/.tar.xz/.zip) atau repo git toolchain"
+        required: false
+        type: string
+        default: ""
+      CLANG_CUSTOM_BRANCH:
+        description: "Hanya untuk custom + repo git: branch/tag (opsional)"
+        required: false
+        type: string
+        default: ""
       KSU_VARIANT:
         description: "KernelSU yang disertakan (none = build polos, paling aman)"
         required: true
@@ -107,6 +123,9 @@ jobs:
       CODENAME: ${{ inputs.CODENAME }}
       LTO_MODE: ${{ inputs.LTO_MODE }}
       EXTRA_KCFLAGS: ${{ inputs.EXTRA_KCFLAGS }}
+      COMPILER: ${{ inputs.COMPILER }}
+      CLANG_CUSTOM_URL: ${{ inputs.CLANG_CUSTOM_URL }}
+      CLANG_CUSTOM_BRANCH: ${{ inputs.CLANG_CUSTOM_BRANCH }}
       KSU_VARIANT: ${{ inputs.KSU_VARIANT }}
       MANAGER_AUTO: ${{ inputs.MANAGER_AUTO }}
       MGR_ORIGINAL_LATEST: ${{ inputs.MGR_ORIGINAL_LATEST }}
@@ -136,12 +155,51 @@ jobs:
             python3 ccache git wget curl lsb-release software-properties-common gnupg \
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
 
-      - name: Install Clang ${{ env.LLVM_VER }}
+      - name: Install compiler (${{ inputs.COMPILER }})
         run: |
-          wget -q https://apt.llvm.org/llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh "${LLVM_VER}" all
-          echo "/usr/lib/llvm-${LLVM_VER}/bin" >> "$GITHUB_PATH"
+          set -euo pipefail
+          if [ "$COMPILER" = "custom" ]; then
+            [ -n "$CLANG_CUSTOM_URL" ] || { echo "::error::COMPILER=custom tapi CLANG_CUSTOM_URL kosong"; exit 1; }
+            mkdir -p toolchain/clang
+            case "$CLANG_CUSTOM_URL" in
+              *.tar.gz|*.tgz) curl -fLsS "$CLANG_CUSTOM_URL" | tar -xz -C toolchain/clang ;;
+              *.tar.xz)       curl -fLsS "$CLANG_CUSTOM_URL" | tar -xJ -C toolchain/clang ;;
+              *.zip)
+                curl -fLsS -o /tmp/toolchain.zip "$CLANG_CUSTOM_URL"
+                unzip -q /tmp/toolchain.zip -d toolchain/clang ;;
+              *)
+                if [ -n "$CLANG_CUSTOM_BRANCH" ]; then
+                  git clone --depth=1 -b "$CLANG_CUSTOM_BRANCH" "$CLANG_CUSTOM_URL" toolchain/clang
+                else
+                  git clone --depth=1 "$CLANG_CUSTOM_URL" toolchain/clang
+                fi ;;
+            esac
+            CLANG_BIN=$(find "$PWD/toolchain/clang" -maxdepth 4 -type f -name clang | head -n1 | xargs -r dirname)
+            [ -n "$CLANG_BIN" ] || { echo "::error::Binary clang tidak ditemukan di toolchain custom"; exit 1; }
+            echo "Toolchain custom: $CLANG_BIN"
+            echo "$CLANG_BIN" >> "$GITHUB_PATH"
+          else
+            V="${COMPILER#clang-}"
+            # Coba repo Ubuntu dulu; kalau tidak ada (mis. clang-20), pakai apt.llvm.org
+            if ! sudo apt-get install -y --no-install-recommends "clang-$V" "lld-$V" "llvm-$V"; then
+              wget -q https://apt.llvm.org/llvm.sh
+              chmod +x llvm.sh
+              sudo ./llvm.sh "$V" all
+            fi
+            echo "/usr/lib/llvm-$V/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Cek toolchain
+        run: |
+          missing=0
+          for t in clang ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-strip \
+                   aarch64-linux-gnu-gcc arm-linux-gnueabi-gcc; do
+            if command -v "$t" >/dev/null; then echo "ok      $t -> $(command -v "$t")"
+            else echo "::error::Tidak ditemukan: $t"; missing=1; fi
+          done
+          [ "$missing" = 0 ] || { echo "Toolchain tidak lengkap (untuk custom: pastikan bundelnya memuat lld dan llvm-*)"; exit 1; }
+          clang --version | head -1
+          ld.lld --version
 
       - name: Clone source kernel
         run: |
@@ -273,7 +331,17 @@ jobs:
             echo "::error::Full LTO diminta tapi LTO_CLANG tidak aktif"; exit 1
           fi
           if [ "$KSU_VARIANT" != "none" ]; then
-            grep -q "^CONFIG_KSU=y" "$OUT_DIR/.config" || { echo "::error::CONFIG_KSU tidak aktif (dependensi Kconfig?)"; exit 1; }
+            if ! grep -q "^CONFIG_KSU=y" "$OUT_DIR/.config"; then
+              echo "=== DIAGNOSA: CONFIG_KSU tidak aktif ==="
+              echo "--- baris KSU di .config"
+              grep -n "KSU" "$OUT_DIR/.config" || echo "(tidak ada sama sekali)"
+              echo "--- definisi 'config KSU' di Kconfig (cari baris 'depends on')"
+              grep -RhnE -B2 -A14 "^config KSU$" drivers/kernelsu/ KernelSU/ 2>/dev/null | head -n 60 || true
+              echo "--- status dependensi yang umum"
+              grep -nE "^(# )?CONFIG_(KPROBES|KPROBE_EVENTS|OVERLAY_FS|MODULES|HAVE_KPROBES|KSU_[A-Z_]+)[ =]" "$OUT_DIR/.config" || true
+              echo "::error::CONFIG_KSU tidak aktif: lihat 'depends on' di bagian DIAGNOSA di atas"
+              exit 1
+            fi
             if [ "$KSU_VARIANT" = "xxksu" ]; then
               grep -q "^CONFIG_KSU_TAMPER_SYSCALL_TABLE=y" "$OUT_DIR/.config" || { echo "::error::KSU_TAMPER_SYSCALL_TABLE tidak aktif"; exit 1; }
             else
@@ -413,6 +481,7 @@ jobs:
           body: |
             Kernel: ${{ env.KERNEL_NAME }}
             Device: ${{ env.CODENAME }}
+            Compiler: ${{ env.COMPILER }}
             LTO: ${{ env.LTO_MODE }}
             KernelSU: ${{ env.KSU_VARIANT }}
             Commit source: ${{ env.KERNEL_COMMIT }}
