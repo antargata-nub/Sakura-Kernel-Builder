@@ -114,6 +114,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   build:
@@ -152,6 +153,48 @@ jobs:
     steps:
       - name: Catat waktu mulai
         run: echo "START_EPOCH=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Telegram - siapkan helper
+        if: ${{ env.BOT_TOKEN != '' && env.CHAT_ID != '' }}
+        run: |
+          cat > /tmp/tg.sh <<'EOF'
+          API="https://api.telegram.org/bot${BOT_TOKEN}"
+          tg_msg() {
+            curl -sS -X POST "$API/sendMessage" \
+              --data-urlencode chat_id="$CHAT_ID" \
+              --data-urlencode text="$1" \
+              -d disable_web_page_preview=true -o /tmp/tg_resp.json || true
+            jq -e '.ok' /tmp/tg_resp.json >/dev/null 2>&1 \
+              || echo "::warning::Telegram menolak pesan: $(cat /tmp/tg_resp.json 2>/dev/null)"
+          }
+          tg_file() {  # path caption
+            local sz
+            sz=$(stat -c %s "$1")
+            if [ "$sz" -gt 49000000 ]; then
+              tg_msg "File $(basename "$1") terlalu besar untuk Telegram ($((sz/1048576)) MB). Ambil dari Release atau Artifacts."
+              return 0
+            fi
+            curl -sS -X POST "$API/sendDocument" \
+              -F chat_id="$CHAT_ID" -F document=@"$1" -F caption="$2" -o /tmp/tg_resp.json || true
+            jq -e '.ok' /tmp/tg_resp.json >/dev/null 2>&1 \
+              || echo "::warning::Telegram menolak file: $(cat /tmp/tg_resp.json 2>/dev/null)"
+          }
+          EOF
+
+      - name: Telegram - build dimulai
+        if: ${{ env.BOT_TOKEN != '' && env.CHAT_ID != '' }}
+        continue-on-error: true
+        run: |
+          source /tmp/tg.sh
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          tg_msg "Build dimulai
+          Kernel   : ${KERNEL_NAME} (${CODENAME})
+          Source   : ${KERNEL_SOURCE} @ ${KERNEL_BRANCH}
+          Config   : ${KERNEL_CONFIG} ${KERNEL_FRAGMENT}
+          Compiler : ${COMPILER}
+          LTO      : ${LTO_MODE}
+          KernelSU : ${KSU_VARIANT}
+          Run      : ${RUN_URL}"
 
       - name: Install dependensi
         run: |
@@ -275,6 +318,7 @@ jobs:
         working-directory: kernel
         run: |
           set -euo pipefail
+          exec > >(tee -a build-full.log) 2>&1
           OUT_DIR=out
           CFG_DIR=arch/arm64/configs
 
@@ -489,7 +533,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-log
-          path: kernel/build.log
+          path: |
+            kernel/build-full.log
+            kernel/build.log
           if-no-files-found: ignore
 
       - name: Publish ke GitHub Release
@@ -508,34 +554,58 @@ jobs:
           files: dist/*
 
       # ------------------------------------------------------------
-      # Telegram (opsional, lewat Secrets)
+      # Telegram (opsional, lewat Secrets BOT_TOKEN dan CHAT_ID)
       # ------------------------------------------------------------
-      - name: Telegram - sukses
+      - name: Telegram - sukses (hasil + log)
         if: ${{ success() && env.BOT_TOKEN != '' && env.CHAT_ID != '' }}
         continue-on-error: true
         run: |
+          source /tmp/tg.sh
           ELAPSED=$(( $(date +%s) - START_EPOCH ))
-          SEND=$(ls dist/*.zip 2>/dev/null | head -n1 || true)
-          [ -z "$SEND" ] && SEND=$(ls dist/*Image* | head -n1)
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          curl -sS -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument" \
-            -F chat_id="${CHAT_ID}" \
-            -F document=@"${SEND}" \
-            -F caption="Build berhasil: ${BASE_NAME} | LTO ${LTO_MODE} | KSU ${KSU_VARIANT} | $((ELAPSED/60))m $((ELAPSED%60))s | ${RUN_URL}"
+          tg_msg "Build BERHASIL: ${BASE_NAME}
+          Compiler : ${COMPILER}
+          LTO      : ${LTO_MODE}
+          KernelSU : ${KSU_VARIANT}
+          Durasi   : $((ELAPSED/60))m $((ELAPSED%60))s
+          Run      : ${RUN_URL}"
+          for f in dist/*; do
+            tg_file "$f" "$(basename "$f")  ($(du -h "$f" | cut -f1))"
+          done
+          LOG=kernel/build-full.log
+          [ -f "$LOG" ] || LOG=kernel/build.log
+          if [ -f "$LOG" ]; then
+            sleep 2
+            gzip -9 -c "$LOG" > build-log.gz
+            tg_file build-log.gz "Log lengkap (gzip)"
+          fi
 
-      - name: Telegram - gagal
+      - name: Telegram - gagal (log)
         if: ${{ failure() && env.BOT_TOKEN != '' && env.CHAT_ID != '' }}
         continue-on-error: true
         run: |
+          source /tmp/tg.sh
+          ELAPSED=$(( $(date +%s) - START_EPOCH ))
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          if [ -f kernel/build.log ]; then
-            grep -nE "error:|\*\*\* |Error [0-9]+$" kernel/build.log | head -n 80 > errors.txt || true
-            [ -s errors.txt ] || tail -n 100 kernel/build.log > errors.txt
-            curl -sS -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument" \
-              -F chat_id="${CHAT_ID}" -F document=@errors.txt \
-              -F caption="Build GAGAL: ${CODENAME} | ${RUN_URL}"
+          STEP=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
+            --jq '.jobs[0].steps[] | select(.conclusion=="failure") | .name' 2>/dev/null | head -n1 || true)
+          [ -n "$STEP" ] || STEP="(tidak diketahui)"
+          tg_msg "Build GAGAL: ${CODENAME}
+          Langkah  : ${STEP}
+          Compiler : ${COMPILER}
+          LTO      : ${LTO_MODE}
+          KernelSU : ${KSU_VARIANT}
+          Durasi   : $((ELAPSED/60))m $((ELAPSED%60))s
+          Run      : ${RUN_URL}"
+          LOG=kernel/build-full.log
+          [ -f "$LOG" ] || LOG=kernel/build.log
+          if [ -f "$LOG" ]; then
+            sleep 2
+            grep -nE "error:|\*\*\* |Error [0-9]+$|DIAGNOSA" "$LOG" | head -n 80 > errors.txt || true
+            [ -s errors.txt ] || tail -n 100 "$LOG" > errors.txt
+            tg_file errors.txt "Ringkasan error"
+            gzip -9 -c "$LOG" > build-log.gz
+            tg_file build-log.gz "Log lengkap (gzip)"
           else
-            curl -sS -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-              -d chat_id="${CHAT_ID}" \
-              -d text="Build GAGAL sebelum tahap kompilasi: ${RUN_URL}"
+            tg_msg "Log build belum ada (gagal sebelum tahap kompilasi). Buka Run di atas, langkah: ${STEP}"
           fi
