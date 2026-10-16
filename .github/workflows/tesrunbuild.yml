@@ -188,13 +188,13 @@ jobs:
           source /tmp/tg.sh
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           tg_msg "Build dimulai
-          Kernel   : ${KERNEL_NAME} (${CODENAME})
-          Source   : ${KERNEL_SOURCE} @ ${KERNEL_BRANCH}
-          Config   : ${KERNEL_CONFIG} ${KERNEL_FRAGMENT}
-          Compiler : ${COMPILER}
-          LTO      : ${LTO_MODE}
-          KernelSU : ${KSU_VARIANT}
-          Run      : ${RUN_URL}"
+          -Kernel   : ${KERNEL_NAME} (${CODENAME})
+          -Source   : ${KERNEL_SOURCE} @ ${KERNEL_BRANCH}
+          -Config   : ${KERNEL_CONFIG} ${KERNEL_FRAGMENT}
+          -Compiler : ${COMPILER}
+          -LTO      : ${LTO_MODE}
+          -KernelSU : ${KSU_VARIANT}
+          -Run      : ${RUN_URL}"
 
       - name: Install dependensi
         run: |
@@ -271,12 +271,11 @@ jobs:
           echo "Mengunduh file patch kernel-4.19 dari kucingoranye..."
           curl -fLsS -o /tmp/ksun.patch "https://raw.githubusercontent.com/kucingoranye/kernel_patches/main/manual_hook-rksu-ksun/kernel-4.19_5.4.patch"
           
-          echo "Menerapkan patch ke source kernel..."
-          git apply /tmp/ksun.patch || {
-            echo "::warning::git apply standar gagal, mencoba dengan --ignore-whitespace..."
-            git apply --ignore-whitespace /tmp/ksun.patch
+          echo "Menerapkan patch ke source kernel menggunakan perintah patch -p1..."
+          patch -p1 -N --no-backup-if-mismatch < /tmp/ksun.patch || {
+            echo "::warning::Ada bagian patch yang mengalami reject (.rej), namun proses tetap dilanjutkan."
           }
-          echo "Patch manual berhasil diterapkan!"
+          echo "Tahap patch selesai."
 
       - name: Validasi config
         working-directory: kernel
