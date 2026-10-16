@@ -188,13 +188,13 @@ jobs:
           source /tmp/tg.sh
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           tg_msg "Build dimulai
-          Kernel   : ${KERNEL_NAME} (${CODENAME})
-          Source   : ${KERNEL_SOURCE} @ ${KERNEL_BRANCH}
-          Config   : ${KERNEL_CONFIG} ${KERNEL_FRAGMENT}
-          Compiler : ${COMPILER}
-          LTO      : ${LTO_MODE}
-          KernelSU : ${KSU_VARIANT}
-          Run      : ${RUN_URL}"
+          -Kernel   : ${KERNEL_NAME} (${CODENAME})
+          -Source   : ${KERNEL_SOURCE} @ ${KERNEL_BRANCH}
+          -Config   : ${KERNEL_CONFIG} ${KERNEL_FRAGMENT}
+          -Compiler : ${COMPILER}
+          -LTO      : ${LTO_MODE}
+          -KernelSU : ${KSU_VARIANT}
+          -Run      : ${RUN_URL}"
 
       - name: Install dependensi
         run: |
