@@ -7,7 +7,7 @@ on:
         description: "URL repo source kernel"
         required: true
         type: string
-        default: "https://github.com/pix106/android_kernel_xiaomi_sdm660_southwest-ng"
+        default: "https://github.com/antargata-nub/android_kernel_xiaomi_sdm660_southwest-ng.git"
       KERNEL_BRANCH:
         description: "Branch source kernel"
         required: true
