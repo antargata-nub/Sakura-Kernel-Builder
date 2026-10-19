@@ -1,456 +1,617 @@
-name: Build Kernel
+name: Build Kernel Universal
 
 on:
   workflow_dispatch:
     inputs:
       KERNEL_SOURCE:
-        description: "Kernel source repo URL"
+        description: "URL repo source kernel"
         required: true
         type: string
+        default: "https://github.com/antargata-nub/android_kernel_xiaomi_sdm660_southwest-ng.git"
       KERNEL_BRANCH:
-        description: "Kernel source branch"
+        description: "Branch source kernel"
         required: true
         type: string
+        default: "old/main-dynamic"
       KERNEL_CONFIG:
-        description: "Defconfig name (no path, e.g. lavender_defconfig)"
+        description: "Defconfig dasar (relatif ke arch/<arch>/configs), mis. vendor/xiaomi/sdm660_defconfig atau lavender_defconfig"
         required: true
         type: string
+        default: "vendor/xiaomi/sdm660_defconfig"
       KERNEL_FRAGMENT:
-        description: "Fragment config (opsional, mis. vendor/xiaomi/lavender.config)"
+        description: "Fragment config (pisahkan spasi, kosongkan jika tidak ada), mis. vendor/xiaomi/lavender.config"
         required: false
         type: string
-        default: ""
+        default: "vendor/xiaomi/lavender.config"
       KERNEL_NAME:
-        description: "Kernel name used for file naming (e.g. Sakura)"
-        required: false
-        type: string
-        default: "Sakura"
-      KERNEL_VERSION:
-        description: "Major kernel version (determines toolchain)"
+        description: "Nama kernel (untuk penamaan file)"
         required: true
-        type: choice
-        options:
-          - "4.4"
-          - "4.14"
-          - "4.19"
+        type: string
+        default: "Southwest"
       CODENAME:
-        description: "Device codename (e.g. lavender)"
+        description: "Codename device (contoh: lavender, surya, ginkgo)"
         required: true
         type: string
-      BOT_TOKEN:
-        description: "Telegram Bot Token (optional)"
-        required: false
-        type: string
-        default: ""
-      CHAT_ID:
-        description: "Telegram Chat ID (optional)"
-        required: false
-        type: string
-        default: ""
-      USE_ANYKERNEL3:
-        description: "Use AnyKernel3?"
+        default: "lavender"
+      TARGET_ARCH:
+        description: "Arsitektur target"
+        required: true
+        type: choice
+        options: [arm64, arm]
+        default: arm64
+      RUNNER:
+        description: "OS runner (Gunakan ubuntu-22.04 untuk Clang 11-13 / kernel 4.4/4.9)"
+        required: true
+        type: choice
+        options: [ubuntu-24.04, ubuntu-22.04]
+        default: ubuntu-24.04
+      COMPILER:
+        description: "Pilih Compiler / Toolchain"
         required: true
         type: choice
         options:
-          - "yes"
-          - "no"
-        default: "yes"
-      PATCH_KERNELSU:
-        description: "Patch KernelSU (optional)"
+          - zyc-clang-20
+          - zyc-clang-19
+          - proton-clang-13
+          - aosp-clang-r41637b
+          - greenforce-clang
+          - clang-22
+          - clang-21
+          - clang-20
+          - clang-19
+          - clang-18
+          - clang-17
+          - clang-16
+          - clang-15
+          - clang-14
+          - clang-13
+          - clang-12
+          - clang-11
+          - custom
+        default: zyc-clang-20
+      CLANG_CUSTOM_URL:
+        description: "Hanya untuk COMPILER=custom: URL archive (.tar.gz / .tar.xz / .zip) atau git repo"
+        required: false
+        type: string
+        default: ""
+      CLANG_CUSTOM_BRANCH:
+        description: "Hanya untuk custom + git repo: branch/tag (opsional)"
+        required: false
+        type: string
+        default: ""
+      LTO_MODE:
+        description: "Mode LTO (otomatis dilewati jika source tidak mendukung)"
+        required: true
+        type: choice
+        options: [thin, full, none]
+        default: thin
+      EXTRA_KCFLAGS:
+        description: "KCFLAGS tambahan"
+        required: false
+        type: string
+        default: "-Wno-error"
+      EXTRA_MAKE_ARGS:
+        description: "Argumen make tambahan, pisahkan spasi (misal: LLVM_IAS=0 untuk kernel 4.4/4.9 + Clang baru)"
+        required: false
+        type: string
+        default: ""
+      KSU_VARIANT:
+        description: "Varian KernelSU (none = polos, 4.4/4.9 butuh backport manual di source)"
+        required: true
+        type: choice
+        options: [none, xxksu, ksu-next, ksu-original]
+        default: none
+      KSU_ENABLE_MODULES:
+        description: "Hanya ksu-next/original: aktifkan CONFIG_MODULES & KPROBES"
+        required: false
+        type: boolean
+        default: true
+      KSU_PATCH_URL:
+        description: "URL patch manual hook KSU (kosongkan untuk auto 4.14/4.19)"
+        required: false
+        type: string
+        default: ""
+      MANAGER_AUTO:
+        description: "Sertakan APK manager sesuai varian KSU"
+        required: true
+        type: boolean
+        default: true
+      MGR_EXTRA:
+        description: "Manager ekstra (pisahkan koma: original,next,rksu,kowsu)"
+        required: false
+        type: string
+        default: ""
+      BUILD_ANYKERNEL3:
+        description: "Kemas zip AnyKernel3"
+        required: true
+        type: boolean
+        default: true
+      AK3_REPO:
+        description: "URL repo AnyKernel3 milikmu (kosong = AnyKernel3 generik)"
+        required: false
+        type: string
+        default: ""
+      AK3_BLOCK:
+        description: "Path partisi boot (Qualcomm umumnya /dev/block/bootdevice/by-name/boot)"
+        required: false
+        type: string
+        default: "/dev/block/bootdevice/by-name/boot"
+      AK3_SLOT_DEVICE:
+        description: "Device A/B slot? (0 = bukan, 1 = ya, auto = deteksi)"
         required: false
         type: choice
-        options:
-          - "none"
-          - "ksu-next"
-          - "ksu-original"
-        default: "none"
+        options: ["0", "1", auto]
+        default: "0"
+      PUBLISH_RELEASE:
+        description: "Publikasikan ke GitHub Release"
+        required: true
+        type: boolean
+        default: true
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ${{ inputs.RUNNER }}
+    timeout-minutes: 180
     env:
-      KERNEL_SOURCE: ${{ github.event.inputs.KERNEL_SOURCE }}
-      KERNEL_BRANCH: ${{ github.event.inputs.KERNEL_BRANCH }}
-      KERNEL_CONFIG: ${{ github.event.inputs.KERNEL_CONFIG }}
-      KERNEL_FRAGMENT: ${{ github.event.inputs.KERNEL_FRAGMENT }}
-      KERNEL_NAME: ${{ github.event.inputs.KERNEL_NAME }}
-      KERNEL_VERSION: ${{ github.event.inputs.KERNEL_VERSION }}
-      CODENAME: ${{ github.event.inputs.CODENAME }}
-      BOT_TOKEN: ${{ github.event.inputs.BOT_TOKEN }}
-      CHAT_ID: ${{ github.event.inputs.CHAT_ID }}
-      USE_ANYKERNEL3: ${{ github.event.inputs.USE_ANYKERNEL3 }}
-      PATCH_KERNELSU: ${{ github.event.inputs.PATCH_KERNELSU }}
+      KERNEL_SOURCE: ${{ inputs.KERNEL_SOURCE }}
+      KERNEL_BRANCH: ${{ inputs.KERNEL_BRANCH }}
+      KERNEL_CONFIG: ${{ inputs.KERNEL_CONFIG }}
+      KERNEL_FRAGMENT: ${{ inputs.KERNEL_FRAGMENT }}
+      KERNEL_NAME: ${{ inputs.KERNEL_NAME }}
+      CODENAME: ${{ inputs.CODENAME }}
+      TARGET_ARCH: ${{ inputs.TARGET_ARCH }}
+      COMPILER: ${{ inputs.COMPILER }}
+      CLANG_CUSTOM_URL: ${{ inputs.CLANG_CUSTOM_URL }}
+      CLANG_CUSTOM_BRANCH: ${{ inputs.CLANG_CUSTOM_BRANCH }}
+      LTO_MODE: ${{ inputs.LTO_MODE }}
+      EXTRA_KCFLAGS: ${{ inputs.EXTRA_KCFLAGS }}
+      EXTRA_MAKE_ARGS: ${{ inputs.EXTRA_MAKE_ARGS }}
+      KSU_VARIANT: ${{ inputs.KSU_VARIANT }}
+      KSU_ENABLE_MODULES: ${{ inputs.KSU_ENABLE_MODULES }}
+      KSU_PATCH_URL: ${{ inputs.KSU_PATCH_URL }}
+      MANAGER_AUTO: ${{ inputs.MANAGER_AUTO }}
+      MGR_EXTRA: ${{ inputs.MGR_EXTRA }}
+      BUILD_ANYKERNEL3: ${{ inputs.BUILD_ANYKERNEL3 }}
+      AK3_REPO: ${{ inputs.AK3_REPO }}
+      AK3_BLOCK: ${{ inputs.AK3_BLOCK }}
+      AK3_SLOT_DEVICE: ${{ inputs.AK3_SLOT_DEVICE }}
+      PUBLISH_RELEASE: ${{ inputs.PUBLISH_RELEASE }}
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      CHAT_ID: ${{ secrets.CHAT_ID }}
+      GH_TOKEN: ${{ github.token }}
       KBUILD_BUILD_USER: "github-actions"
       KBUILD_BUILD_HOST: "ci"
 
     steps:
-      # ---------------------------------------------------------------
-      # Record start time (used to compute build duration later)
-      # ---------------------------------------------------------------
-      - name: ⏱️ Record start time
-        run: echo "START_EPOCH=$(date +%s)" >> $GITHUB_ENV
+      - name: Catat waktu mulai
+        run: echo "START_EPOCH=$(date +%s)" >> "$GITHUB_ENV"
 
-      # ---------------------------------------------------------------
-      # NOTIFY: BUILD STARTED
-      # ---------------------------------------------------------------
-      - name: "📣 Telegram: Notify build start"
-        if: env.BOT_TOKEN != '' && env.CHAT_ID != ''
+      - name: Telegram - siapkan helper
+        if: ${{ env.BOT_TOKEN != '' && env.CHAT_ID != '' }}
         run: |
-          KSU_LABEL="No"
-          [ "$PATCH_KERNELSU" = "ksu-next" ] && KSU_LABEL="Yes (KernelSU-Next)"
-          [ "$PATCH_KERNELSU" = "ksu-original" ] && KSU_LABEL="Yes (KernelSU Original)"
+          cat > /tmp/tg.sh <<'EOF'
+          API="https://api.telegram.org/bot${BOT_TOKEN}"
+          tg_msg() {
+            curl -sS -X POST "$API/sendMessage" \
+              --data-urlencode chat_id="$CHAT_ID" \
+              --data-urlencode text="$1" \
+              -d disable_web_page_preview=true -o /tmp/tg_resp.json || true
+            jq -e '.ok' /tmp/tg_resp.json >/dev/null 2>&1 \
+              || echo "::warning::Telegram menolak pesan: $(cat /tmp/tg_resp.json 2>/dev/null)"
+          }
+          tg_file() {
+            local sz
+            sz=$(stat -c %s "$1")
+            if [ "$sz" -gt 49000000 ]; then
+              tg_msg "File $(basename "$1") terlalu besar untuk Telegram ($((sz/1048576)) MB). Ambil dari Release atau Artifacts."
+              return 0
+            fi
+            curl -sS -X POST "$API/sendDocument" \
+              -F chat_id="$CHAT_ID" -F document=@"$1" -F caption="$2" -o /tmp/tg_resp.json || true
+            jq -e '.ok' /tmp/tg_resp.json >/dev/null 2>&1 \
+              || echo "::warning::Telegram menolak file: $(cat /tmp/tg_resp.json 2>/dev/null)"
+          }
+          EOF
 
+      - name: Telegram - build dimulai
+        if: ${{ env.BOT_TOKEN != '' && env.CHAT_ID != '' }}
+        continue-on-error: true
+        run: |
+          source /tmp/tg.sh
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          tg_msg "🚀 Build Dimulai
+          - Kernel   : ${KERNEL_NAME} (${CODENAME})
+          - Source   : ${KERNEL_SOURCE} @ ${KERNEL_BRANCH}
+          - Config   : ${KERNEL_CONFIG} ${KERNEL_FRAGMENT}
+          - Arch     : ${TARGET_ARCH}
+          - Compiler : ${COMPILER}
+          - LTO      : ${LTO_MODE}
+          - KernelSU : ${KSU_VARIANT}
+          - Run      : ${RUN_URL}"
 
-          MSG=$'🔨 *Build Started*\nKernel: `'"${KERNEL_NAME}"'`\nDevice: `'"${CODENAME}"'`\nKernel version: `'"${KERNEL_VERSION}"'`\nKernelSU: `'"${KSU_LABEL}"'`\nTriggered by: `${{ github.actor }}`'
-
-          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-            -d chat_id="${CHAT_ID}" \
-            -d parse_mode="Markdown" \
-            --data-urlencode text="${MSG}" \
-            --data-urlencode reply_markup="$(jq -n --arg url "$RUN_URL" \
-              '{inline_keyboard: [[{text: "🔗 View Build Run", url: $url}]]}')"
-
-      # ---------------------------------------------------------------
-      # SETUP
-      # ---------------------------------------------------------------
-      - name: 🧹 Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
-          sudo docker image prune --all --force || true
-
-      - name: 📦 Install build dependencies
+      - name: Install dependensi
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential bc bison flex libssl-dev libelf-dev \
-            git curl wget zip unzip python3 python-is-python3 \
-            cpio kmod rsync ccache dwarves libncurses-dev \
-            device-tree-compiler
+            build-essential bc bison flex libssl-dev libelf-dev libncurses-dev cpio zip unzip jq \
+            python3 ccache git wget curl lsb-release software-properties-common gnupg \
+            device-tree-compiler u-boot-tools lz4 xz-utils rsync \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
 
-          if [ "$KERNEL_VERSION" = "4.4" ] || [ "$KERNEL_VERSION" = "4.14" ]; then
-            wget -q http://archive.ubuntu.com/ubuntu/pool/main/o/openssl1.0/libssl1.0.0_1.0.2n-1ubuntu5.10_amd64.deb || true
-            sudo dpkg -i libssl1.0.0_1.0.2n-1ubuntu5.10_amd64.deb 2>/dev/null || true
-          fi
-
-      - name: 🗃️ Setup ccache
+      - name: Install compiler (${{ inputs.COMPILER }})
         run: |
-          mkdir -p ~/.ccache
-          echo "USE_CCACHE=1" >> $GITHUB_ENV
-          echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+          set -euo pipefail
+          mkdir -p toolchain/clang
 
-      # ---------------------------------------------------------------
-      # CLONE KERNEL SOURCE
-      # ---------------------------------------------------------------
-      - name: 📥 Clone kernel source
+          case "$COMPILER" in
+            proton-clang-13)
+              echo "Mengunduh Proton Clang 13..."
+              git clone --depth=1 https://github.com/kdrag0n/proton-clang.git toolchain/clang
+              ;;
+            aosp-clang-r41637b)
+              echo "Mengunduh AOSP Clang r41637b..."
+              git clone --depth=1 https://gitlab.com/sarthakroy2002/aosp-clang.git -b r41637b toolchain/clang
+              ;;
+            zyc-clang-20)
+              echo "Mengunduh ZyC Clang 20..."
+              URL=$(curl -s https://api.github.com/repos/ZyCromerZ/Clang/releases/latest | jq -r '.assets[]? | select(.name | contains("ZyC-Clang-20")) | .browser_download_url' | head -n1)
+              [ -n "$URL" ] || URL=$(curl -s https://api.github.com/repos/ZyCromerZ/Clang/releases | jq -r '.[].assets[]? | select(.name | contains("ZyC-Clang-20")) | .browser_download_url' | head -n1)
+              curl -fLsS "$URL" | tar -xJ -C toolchain/clang
+              ;;
+            zyc-clang-19)
+              echo "Mengunduh ZyC Clang 19..."
+              URL=$(curl -s https://api.github.com/repos/ZyCromerZ/Clang/releases/tags/19.0.0-20240901 | jq -r '.assets[]? | select(.name | contains("ZyC-Clang-19")) | .browser_download_url' | head -n1)
+              [ -n "$URL" ] || URL=$(curl -s https://api.github.com/repos/ZyCromerZ/Clang/releases | jq -r '.[].assets[]? | select(.name | contains("ZyC-Clang-19")) | .browser_download_url' | head -n1)
+              curl -fLsS "$URL" | tar -xJ -C toolchain/clang
+              ;;
+            greenforce-clang)
+              echo "Mengunduh GreenForce Clang..."
+              git clone --depth=1 https://github.com/GreenForce-Project/greenforce_clang.git toolchain/clang
+              ;;
+            custom)
+              [ -n "$CLANG_CUSTOM_URL" ] || { echo "::error::COMPILER=custom tapi CLANG_CUSTOM_URL kosong"; exit 1; }
+              case "$CLANG_CUSTOM_URL" in
+                *.tar.gz|*.tgz) curl -fLsS "$CLANG_CUSTOM_URL" | tar -xz -C toolchain/clang ;;
+                *.tar.xz)       curl -fLsS "$CLANG_CUSTOM_URL" | tar -xJ -C toolchain/clang ;;
+                *.zip)
+                  curl -fLsS -o /tmp/toolchain.zip "$CLANG_CUSTOM_URL"
+                  unzip -q /tmp/toolchain.zip -d toolchain/clang ;;
+                *)
+                  if [ -n "$CLANG_CUSTOM_BRANCH" ]; then
+                    git clone --depth=1 -b "$CLANG_CUSTOM_BRANCH" "$CLANG_CUSTOM_URL" toolchain/clang
+                  else
+                    git clone --depth=1 "$CLANG_CUSTOM_URL" toolchain/clang
+                  fi ;;
+              esac
+              ;;
+            clang-*)
+              V="${COMPILER#clang-}"
+              if ! sudo apt-get install -y --no-install-recommends "clang-$V" "lld-$V" "llvm-$V"; then
+                wget -q https://apt.llvm.org/llvm.sh
+                chmod +x llvm.sh
+                sudo ./llvm.sh "$V" all || { echo "::error::clang-$V tidak tersedia. Coba ganti RUNNER atau versi compiler lain."; exit 1; }
+              fi
+              echo "/usr/lib/llvm-$V/bin" >> "$GITHUB_PATH"
+              echo "Menggunakan System Clang $V"
+              exit 0
+              ;;
+          esac
+
+          CLANG_BIN=$(find "$PWD/toolchain/clang" -maxdepth 4 -type f -name clang | head -n1 | xargs -r dirname)
+          [ -n "$CLANG_BIN" ] || { echo "::error::Binary clang tidak ditemukan di folder toolchain"; exit 1; }
+          echo "$CLANG_BIN" >> "$GITHUB_PATH"
+          echo "Toolchain disiapkan dari: $CLANG_BIN"
+
+      - name: Cek toolchain
         run: |
-          git clone --depth=1 --recurse-submodules --shallow-submodules -b "$KERNEL_BRANCH" "$KERNEL_SOURCE" kernel
+          missing=0
+          for t in clang ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-strip \
+                   aarch64-linux-gnu-gcc arm-linux-gnueabi-gcc; do
+            if command -v "$t" >/dev/null; then echo "ok      $t -> $(command -v "$t")"
+            else echo "::error::Tidak ditemukan: $t"; missing=1; fi
+          done
+          [ "$missing" = 0 ] || { echo "Toolchain tidak lengkap (untuk custom: pastikan bundel memuat lld dan llvm-*)"; exit 1; }
+          clang --version | head -1
+          ld.lld --version
+
+      - name: Clone source kernel
+        run: |
+          git clone --depth=1 --recurse-submodules --shallow-submodules \
+            -b "$KERNEL_BRANCH" "$KERNEL_SOURCE" kernel
           cd kernel
-          # Fallback in case shallow-submodules fails (some submodules don't support shallow fetch)
           if git submodule status | grep -qE '^-'; then
-            echo "Some submodules are not initialized yet, retrying without shallow..."
             git submodule update --init --recursive
           fi
-          cd ..
-          echo "KDIR=$(pwd)/kernel" >> $GITHUB_ENV
-          echo "KERNEL_COMMIT=$(cd kernel && git rev-parse --short HEAD)" >> $GITHUB_ENV
+          echo "KERNEL_COMMIT=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
 
-      # ---------------------------------------------------------------
-      # TOOLCHAIN: sweet spot clang + gcc based on KERNEL_VERSION
-      # ---------------------------------------------------------------
-      - name: 🛠️ Setup toolchain (clang + gcc)
-        run: |
-          mkdir -p toolchain/clang toolchain/gcc64 toolchain/gcc32
-
-          case "$KERNEL_VERSION" in
-            "4.4")  CLANG_BRANCH="9.0.0-release" ;;
-            "4.14") CLANG_BRANCH="12.0.0-release" ;;
-            "4.19") CLANG_BRANCH="14.0.0-release" ;;
-          esac
-          echo "Using clang branch: $CLANG_BRANCH"
-
-          git clone --depth=1 -b "$CLANG_BRANCH" https://github.com/ZyCromerZ/Clang toolchain/clang \
-            || git clone --depth=1 https://github.com/kdrag0n/proton-clang toolchain/clang
-
-          # AOSP GCC is needed as an assembler fallback for 4.4 & 4.14
-          if [ "$KERNEL_VERSION" != "4.19" ]; then
-            git clone --depth=1 -b android-9.0.0_r1 \
-              https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 toolchain/gcc64
-            git clone --depth=1 -b android-9.0.0_r1 \
-              https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 toolchain/gcc32
-          fi
-
-          echo "$(pwd)/toolchain/clang/bin" >> $GITHUB_PATH
-          echo "$(pwd)/toolchain/gcc64/bin" >> $GITHUB_PATH
-          echo "$(pwd)/toolchain/gcc32/bin" >> $GITHUB_PATH
-
-      # ---------------------------------------------------------------
-      # PATCH KERNELSU (optional)
-      # ---------------------------------------------------------------
-      - name: 🔓 Patch KernelSU
-        if: env.PATCH_KERNELSU != 'none'
+      - name: Deteksi versi kernel dan profil
         working-directory: kernel
         run: |
-          if [ "$PATCH_KERNELSU" = "ksu-next" ]; then
-            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
-          elif [ "$PATCH_KERNELSU" = "ksu-original" ]; then
-            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
-          fi
+          set -euo pipefail
+          V=$(sed -n 's/^VERSION *= *//p' Makefile | head -n1 | tr -d ' ')
+          P=$(sed -n 's/^PATCHLEVEL *= *//p' Makefile | head -n1 | tr -d ' ')
+          S=$(sed -n 's/^SUBLEVEL *= *//p' Makefile | head -n1 | tr -d ' ')
+          KVER="${V}.${P}"
+          echo "KVER=${KVER}" >> "$GITHUB_ENV"
+          echo "KFULL=${V}.${P}.${S}" >> "$GITHUB_ENV"
+          echo "Versi kernel terdeteksi: ${V}.${P}.${S}"
 
-      # ---------------------------------------------------------------
-      # SANITY CHECK: prevent kconfig error "can't open file .../kernelsu/Kconfig"
-      # This happens when drivers/Kconfig already references kernelsu (either
-      # from a source that was already stitched together by the maintainer,
-      # or from the setup.sh above) but the driver folder itself is missing
-      # or failed to clone.
-      # ---------------------------------------------------------------
-      - name: 🩺 Sanity check KernelSU wiring
-        working-directory: kernel
-        run: |
-          KSU_REF=$(grep -iE 'source[[:space:]]+["'"'"']?[^"'"'"']*kernelsu[^"'"'"']*/Kconfig' drivers/Kconfig 2>/dev/null || true)
-          if [ -n "$KSU_REF" ]; then
-            echo "KernelSU reference found in drivers/Kconfig: $KSU_REF"
-            KSU_OK=0
-            for d in drivers/kernelsu drivers/kernelsu-next KernelSU; do
-              if [ -d "$d" ] && [ -n "$(ls -A "$d" 2>/dev/null)" ]; then
-                KSU_OK=1
-                echo "KernelSU driver folder found and populated: $d"
-                break
-              fi
-            done
-            if [ "$KSU_OK" = "0" ]; then
-              if [ "$PATCH_KERNELSU" = "none" ]; then
-                echo "::warning::KernelSU reference exists but the folder is empty/missing (submodule failed to init?). The source line was removed automatically so kconfig doesn't fail."
-                sed -i '/kernelsu/Id' drivers/Kconfig
-                sed -i '/kernelsu/Id' drivers/Makefile 2>/dev/null || true
-              else
-                echo "::error::PATCH_KERNELSU=${PATCH_KERNELSU} but the KernelSU driver folder (drivers/kernelsu, drivers/kernelsu-next, or KernelSU) is empty/missing."
-                echo "::error::Check the 'Clone kernel source' (submodule) and 'Patch KernelSU' steps above."
-                exit 1
-              fi
-            elif [ "$PATCH_KERNELSU" != "none" ]; then
-              echo "::warning::This kernel source already ships with a built-in KernelSU (submodule), but PATCH_KERNELSU=${PATCH_KERNELSU} was also selected. This can cause conflicting/duplicate KSU drivers. If this was unintentional, set PATCH_KERNELSU=none on the next run."
+          # Patch yylloc untuk dtc (kernel 4.4/4.9 + GCC/Clang baru)
+          for f in scripts/dtc/dtc-lexer.lex.c_shipped scripts/dtc/dtc-lexer.l; do
+            if [ -f "$f" ] && grep -q '^YYLTYPE yylloc;' "$f"; then
+              sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/' "$f"
+              echo "Patch yylloc diterapkan: $f"
             fi
-          fi
+          done
 
-      # ---------------------------------------------------------------
-      # BUILD
-      # ---------------------------------------------------------------
-      - name: 🔨 Build kernel
+      - name: Terapkan patch manual hook KSU
+        if: ${{ inputs.KSU_VARIANT == 'ksu-next' || inputs.KSU_VARIANT == 'ksu-original' }}
         working-directory: kernel
         run: |
-          export ARCH=arm64
-          export SUBARCH=arm64
-
-          COMMON_ARGS="-j$(nproc --all) O=out ARCH=arm64 CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip"
-
-          if [ "$KERNEL_VERSION" != "4.19" ]; then
-            COMMON_ARGS="$COMMON_ARGS CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi- CLANG_TRIPLE=aarch64-linux-gnu-"
-          else
-            COMMON_ARGS="$COMMON_ARGS CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu-"
+          set -euo pipefail
+          URL="${KSU_PATCH_URL:-}"
+          if [ -z "$URL" ]; then
+            case "$KVER" in
+              4.14|4.19)
+                URL="https://raw.githubusercontent.com/kucingoranye/kernel_patches/main/manual_hook-rksu-ksun/kernel-4.19_5.4.patch" ;;
+              *)
+                echo "::warning::Tidak ada patch bawaan KSU untuk kernel ${KVER}. Melewati tahap patch."
+                exit 0 ;;
+            esac
           fi
+          echo "Mengunduh patch KSU: $URL"
+          curl -fLsS -o /tmp/ksun.patch "$URL"
+          patch -p1 -N --no-backup-if-mismatch < /tmp/ksun.patch || true
 
-          make $COMMON_ARGS "$KERNEL_CONFIG"
-
-
-          # Fix for build.log: "ld: cannot represent machine `arm'" when linking
-          # arch/arm64/kernel/vdso32/vdso.so.raw. This happens because the
-          # binutils/ld shipped with Ubuntu 22.04 can no longer produce a raw
-          # 32-bit ARM ELF for the old compat vdso. The fix: disable
-          # CONFIG_COMPAT_VDSO so the vdso32 step is skipped entirely (this
-          # doesn't affect modern kernels, the compat vdso is rarely used anyway).
-          if [ -f scripts/config ] && [ -f out/.config ]; then
-            ./scripts/config --file out/.config -d COMPAT_VDSO
-            make $COMMON_ARGS olddefconfig
-          fi
-
-          make $COMMON_ARGS 2>&1 | tee build.log
-
-          IMG=$(find out/arch/arm64/boot -type f -name "Image.gz-dtb" | head -n1)
-          if [ -z "$IMG" ]; then
-            IMG=$(find out/arch/arm64/boot -type f \( -name "Image.gz" -o -name "Image" -o -name "Image-dtb" \) | head -n1)
-          fi
-
-          if [ -z "$IMG" ]; then
-            echo "Kernel image not found, build failed."
+      - name: Validasi config
+        working-directory: kernel
+        run: |
+          CFG_DIR="arch/${TARGET_ARCH}/configs"
+          if [ ! -f "$CFG_DIR/$KERNEL_CONFIG" ]; then
+            echo "::error::$CFG_DIR/$KERNEL_CONFIG tidak ditemukan"
             exit 1
           fi
 
-          echo "IMG_PATH=$(pwd)/$IMG" >> $GITHUB_ENV
+      - name: Integrasi KernelSU
+        if: ${{ inputs.KSU_VARIANT != 'none' }}
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          if [ -d drivers/kernelsu ] || [ -d KernelSU ] || grep -qi "kernelsu" drivers/Kconfig drivers/Makefile 2>/dev/null; then
+            echo "::error::Source ini sudah memuat KernelSU! Pilih KSU_VARIANT=none."
+            exit 1
+          fi
 
-      # ---------------------------------------------------------------
-      # NAMING: KERNEL_NAME-CODENAME-DATE(-KSU/-KSU-NEXT)
-      # ---------------------------------------------------------------
-      - name: 🏷️ Build final filenames
-        if: success()
+          case "$KSU_VARIANT" in
+            xxksu)
+              URL="https://raw.githubusercontent.com/backslashxx/KernelSU/refs/heads/master/kernel/setup.sh"
+              REF="master" ;;
+            ksu-next)
+              URL="https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh"
+              REF="" ;;
+            ksu-original)
+              URL="https://raw.githubusercontent.com/tiann/KernelSU/v0.6.6/kernel/setup.sh"
+              REF="v0.6.6" ;;
+          esac
+
+          curl -fLsS -o /tmp/ksu_setup.sh "$URL"
+          if [ -n "$REF" ]; then bash /tmp/ksu_setup.sh "$REF"; else bash /tmp/ksu_setup.sh; fi
+
+      - name: Build kernel
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          exec > >(tee -a build-full.log) 2>&1
+          OUT_DIR=out
+          CFG_DIR="arch/${TARGET_ARCH}/configs"
+
+          export ARCH="$TARGET_ARCH" SUBARCH="$TARGET_ARCH"
+          MAKE_ARGS=(
+            O="$OUT_DIR" ARCH="$TARGET_ARCH" SUBARCH="$TARGET_ARCH"
+            CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm
+            OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
+          )
+          if [ "$TARGET_ARCH" = "arm64" ]; then
+            MAKE_ARGS+=(
+              CROSS_COMPILE=aarch64-linux-gnu-
+              CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+              CLANG_TRIPLE=aarch64-linux-gnu-
+            )
+          else
+            MAKE_ARGS+=(
+              CROSS_COMPILE=arm-linux-gnueabi-
+              CLANG_TRIPLE=arm-linux-gnueabi-
+            )
+          fi
+          if [ -n "$EXTRA_KCFLAGS" ]; then MAKE_ARGS+=(KCFLAGS="$EXTRA_KCFLAGS"); fi
+          if [ -n "$EXTRA_MAKE_ARGS" ]; then
+            read -r -a EXTRA_ARR <<< "$EXTRA_MAKE_ARGS"
+            MAKE_ARGS+=("${EXTRA_ARR[@]}")
+          fi
+
+          cfg() { scripts/config --file "$OUT_DIR/.config" "$@"; }
+
+          mkdir -p "$OUT_DIR"
+          FILES=("$CFG_DIR/$KERNEL_CONFIG")
+          for frag in $KERNEL_FRAGMENT; do
+            if [ -n "$frag" ] && [ -f "$CFG_DIR/$frag" ]; then FILES+=("$CFG_DIR/$frag"); fi
+          done
+          scripts/kconfig/merge_config.sh -m -O "$OUT_DIR" "${FILES[@]}"
+
+          # Konfigurasi LTO
+          if [ "$LTO_MODE" != "none" ] && [ "$TARGET_ARCH" = "arm64" ]; then
+            case "$LTO_MODE" in
+              thin) cfg -e THINLTO -e LTO_CLANG_THIN -d LTO_CLANG_FULL ;;
+              full) cfg -e LTO_CLANG -e LTO_CLANG_FULL -d THINLTO ;;
+            esac
+          else
+            cfg -d LTO_CLANG -d THINLTO -d LTO_CLANG_THIN -d LTO_CLANG_FULL
+          fi
+
+          # Konfigurasi KernelSU
+          if [ "$KSU_VARIANT" != "none" ]; then
+            cfg -e KSU
+            if [ "$KSU_VARIANT" = "xxksu" ]; then
+              cfg -d KSU_WITH_KPROBES -e KSU_TAMPER_SYSCALL_TABLE
+            else
+              if [ "$KSU_ENABLE_MODULES" = "true" ]; then cfg -e MODULES; fi
+              cfg -e KPROBES -e HAVE_KPROBES -e KPROBE_EVENTS -e OVERLAY_FS
+            fi
+          fi
+
+          make "${MAKE_ARGS[@]}" olddefconfig
+          make -j"$(nproc)" "${MAKE_ARGS[@]}" 2>&1 | tee build.log
+
+          BOOT="$OUT_DIR/arch/${TARGET_ARCH}/boot"
+          if [ "$TARGET_ARCH" = "arm64" ]; then
+            CANDIDATES="Image.gz-dtb Image.lz4-dtb Image.gz Image.lz4 Image"
+          else
+            CANDIDATES="zImage-dtb zImage"
+          fi
+          IMG=""
+          for f in $CANDIDATES; do
+            if [ -f "$BOOT/$f" ]; then IMG="$BOOT/$f"; break; fi
+          done
+          [ -n "$IMG" ] || { echo "::error::Binary Image kernel tidak ditemukan di $BOOT"; exit 1; }
+          echo "IMG_PATH=$(pwd)/$IMG" >> "$GITHUB_ENV"
+          if [ -f "$BOOT/dtbo.img" ]; then echo "DTBO_PATH=$(pwd)/$BOOT/dtbo.img" >> "$GITHUB_ENV"; fi
+
+      - name: Siapkan nama dan folder hasil
         run: |
           DATE=$(date +%Y%m%d)
-
-          case "$PATCH_KERNELSU" in
-            ksu-next)     KSU_TAG="-KSU-NEXT" ;;
+          case "$KSU_VARIANT" in
+            xxksu)        KSU_TAG="-XXKSU" ;;
+            ksu-next)     KSU_TAG="-KSUN" ;;
             ksu-original) KSU_TAG="-KSU" ;;
             *)            KSU_TAG="" ;;
           esac
+          BASE_NAME="${KERNEL_NAME}-${CODENAME}-${KVER}-${DATE}${KSU_TAG}"
+          echo "BASE_NAME=${BASE_NAME}" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=build-${{ github.run_id }}" >> "$GITHUB_ENV"
+          mkdir -p dist
+          cp "$IMG_PATH" "dist/${BASE_NAME}-$(basename "$IMG_PATH")"
 
-          BASE_NAME="${KERNEL_NAME}-${CODENAME}-${DATE}${KSU_TAG}"
-          echo "BASE_NAME=${BASE_NAME}" >> $GITHUB_ENV
-          echo "RELEASE_TAG=build-${{ github.run_id }}" >> $GITHUB_ENV
-
-      # ---------------------------------------------------------------
-      # KERNELSU MANAGER APK: bundle the matching manager app with the release
-      # - ksu-original -> pinned to v0.6.6 (last version compatible with old/legacy KernelSU)
-      # - ksu-next     -> always fetched from the latest KernelSU-Next release
-      # ---------------------------------------------------------------
-      - name: 📱 Download KernelSU Manager APK
-        if: success() && env.PATCH_KERNELSU != 'none'
+      - name: Kemas AnyKernel3
+        if: ${{ inputs.BUILD_ANYKERNEL3 }}
         run: |
-          mkdir -p manager_apk
-
-          if [ "$PATCH_KERNELSU" = "ksu-original" ]; then
-            APK_VERSION="v0.6.6"
-            APK_URL="https://github.com/tiann/KernelSU/releases/download/v0.6.6/KernelSU_v0.6.6_11184-release.apk"
-          elif [ "$PATCH_KERNELSU" = "ksu-next" ]; then
-            API_RESPONSE=$(curl -s "https://api.github.com/repos/KernelSU-Next/KernelSU-Next/releases/latest")
-            APK_VERSION=$(echo "$API_RESPONSE" | jq -r '.tag_name')
-            APK_URL=$(echo "$API_RESPONSE" | jq -r \
-              '.assets[] | select(.name | test("^KernelSU_Next_v.*_[0-9]+-release\\.apk$")) | .browser_download_url' \
-              | head -n1)
-          fi
-
-          if [ -n "$APK_URL" ] && [ "$APK_URL" != "null" ]; then
-            APK_FILE="manager_apk/$(basename "$APK_URL")"
-            curl -LSs -o "$APK_FILE" "$APK_URL"
-            echo "MANAGER_APK_PATH=$(pwd)/$APK_FILE" >> $GITHUB_ENV
-            echo "MANAGER_APK_VERSION=${APK_VERSION}" >> $GITHUB_ENV
-            echo "Downloaded KernelSU Manager APK: ${APK_VERSION}"
+          set -euo pipefail
+          if [ -n "$AK3_REPO" ]; then
+            git clone --depth=1 "$AK3_REPO" AnyKernel3
           else
-            echo "::warning::Could not resolve a Manager APK download URL for PATCH_KERNELSU=${PATCH_KERNELSU}, skipping."
+            git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel3
           fi
-
-      # ---------------------------------------------------------------
-      # PACKAGING: AnyKernel3 (optional) — zip the contents directly, not the folder itself
-      # ---------------------------------------------------------------
-      - name: 🎁 Package with AnyKernel3
-        if: success() && env.USE_ANYKERNEL3 == 'yes'
-        run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel3
           rm -rf AnyKernel3/.git AnyKernel3/*.zip
           cp "$IMG_PATH" AnyKernel3/
-          sed -i "s/device.name1=.*/device.name1=${CODENAME}/" AnyKernel3/anykernel.sh || true
-          cd AnyKernel3
-          zip -r9 "../${BASE_NAME}.zip" . -x ".git*" -x "*.zip"
-          cd ..
-          echo "ZIP_PATH=$(pwd)/${BASE_NAME}.zip" >> $GITHUB_ENV
+          if [ -n "${DTBO_PATH:-}" ] && [ -f "$DTBO_PATH" ]; then
+            cp "$DTBO_PATH" AnyKernel3/
+          fi
 
-      - name: 📄 Rename raw image
-        if: success()
+          if [ -z "$AK3_REPO" ]; then
+            AKS=AnyKernel3/anykernel.sh
+            sed -i "s|^kernel.string=.*|kernel.string=${BASE_NAME}|" "$AKS"
+            sed -i "s/^device.name1=.*/device.name1=${CODENAME}/" "$AKS"
+            for n in 2 3 4 5; do sed -i "s|^device.name${n}=.*|device.name${n}=|" "$AKS"; done
+            sed -i -E "s#^(BLOCK|block)=.*#\1=${AK3_BLOCK};#" "$AKS"
+            sed -i -E "s#^(IS_SLOT_DEVICE|is_slot_device)=.*#\1=${AK3_SLOT_DEVICE};#" "$AKS"
+            sed -i -E 's#^dump_boot;#split_boot;#; s#^write_boot;#flash_boot;#' "$AKS"
+          fi
+
+          (cd AnyKernel3 && zip -r9 "../dist/${BASE_NAME}.zip" . -x ".git*" -x "*.zip")
+
+      - name: Unduh manager APK
         run: |
-          cp "$IMG_PATH" "./${BASE_NAME}-Image.gz-dtb"
-          echo "RAW_IMG_PATH=$(pwd)/${BASE_NAME}-Image.gz-dtb" >> $GITHUB_ENV
+          set -uo pipefail
+          mkdir -p dist
+          latest() {
+            local api tag url
+            api=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$1/releases/latest") || return 0
+            tag=$(jq -r '.tag_name' <<<"$api")
+            url=$(jq -r '[.assets[]? | select(.name|test("\\.apk$")) | select(.name|test("debug";"i")|not)][0].browser_download_url // empty' <<<"$api")
+            [ -n "$url" ] && curl -fLsS -o "dist/Manager-$2-${tag}.apk" "$url" || true
+          }
+          if [ "$MANAGER_AUTO" = "true" ]; then
+            case "$KSU_VARIANT" in
+              ksu-next) latest KernelSU-Next/KernelSU-Next KernelSU-Next ;;
+              xxksu|ksu-original) latest tiann/KernelSU KernelSU ;;
+            esac
+          fi
 
-      # ---------------------------------------------------------------
-      # RELEASE: one file = one file, no zip-in-zip
-      # ---------------------------------------------------------------
-      - name: 🚀 Publish to GitHub Release
-        if: success()
-        uses: softprops/action-gh-release@v2
+          EXTRA=",$(echo "$MGR_EXTRA" | tr 'A-Z' 'a-z' | tr -d ' '),"
+          case "$EXTRA" in *,original,*) latest tiann/KernelSU KernelSU ;; esac
+          case "$EXTRA" in *,next,*)     latest KernelSU-Next/KernelSU-Next KernelSU-Next ;; esac
+          case "$EXTRA" in *,rksu,*)     latest rsuntk/KernelSU RKSU ;; esac
+          case "$EXTRA" in *,kowsu,*)    latest KOWX712/KernelSU KowSU ;; esac
+
+      - name: Upload artifact hasil
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          name: "${{ env.BASE_NAME }}"
-          body: |
-            Kernel: ${{ env.KERNEL_NAME }}
-            Kernel version: ${{ env.KERNEL_VERSION }}
-            Codename: ${{ env.CODENAME }}
-            KernelSU: ${{ env.PATCH_KERNELSU }}
-            KernelSU Manager: ${{ env.MANAGER_APK_VERSION }}
-            Commit: ${{ env.KERNEL_COMMIT }}
-          files: |
-            ${{ env.RAW_IMG_PATH }}
-            ${{ env.ZIP_PATH }}
-            ${{ env.MANAGER_APK_PATH }}
+          name: ${{ env.BASE_NAME }}
+          path: dist/*
 
-      # ---------------------------------------------------------------
-      # NOTIFY: SUCCESS (+ send the file directly to Telegram)
-      # ---------------------------------------------------------------
-      - name: "✅ Telegram: Notify build success"
-        if: success() && env.BOT_TOKEN != '' && env.CHAT_ID != ''
-        run: |
-          KSU_LABEL="No"
-          [ "$PATCH_KERNELSU" = "ksu-next" ] && KSU_LABEL="Yes (KernelSU-Next)"
-          [ "$PATCH_KERNELSU" = "ksu-original" ] && KSU_LABEL="Yes (KernelSU Original)"
-
-          SEND_FILE="$ZIP_PATH"
-          [ "$USE_ANYKERNEL3" = "no" ] && SEND_FILE="$RAW_IMG_PATH"
-
-          FILE_SIZE=$(du -h "$SEND_FILE" | cut -f1)
-          FILE_SHA=$(sha256sum "$SEND_FILE" | cut -c1-12)
-
-          ELAPSED=$(( $(date +%s) - START_EPOCH ))
-          DURATION="$((ELAPSED / 60))m $((ELAPSED % 60))s"
-
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          RELEASE_URL="${{ github.server_url }}/${{ github.repository }}/releases/tag/${RELEASE_TAG}"
-
-          MANAGER_LINE=""
-          [ -n "$MANAGER_APK_VERSION" ] && MANAGER_LINE=$'\n📱 Manager: `'"${MANAGER_APK_VERSION}"'` (bundled in release)'
-
-          MSG=$'✅ *Build Success*\nKernel: `'"${KERNEL_NAME}"'`\nDevice: `'"${CODENAME}"'`\nKernel version: `'"${KERNEL_VERSION}"'`\nKernelSU: `'"${KSU_LABEL}"'`'"${MANAGER_LINE}"$'\n\n⏱ Duration: `'"${DURATION}"'`\n📦 Size: `'"${FILE_SIZE}"'`\n🔗 SHA256: `'"${FILE_SHA}"'`\n📝 Commit: `'"${KERNEL_COMMIT}"'`'
-
-          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-            -d chat_id="${CHAT_ID}" \
-            -d parse_mode="Markdown" \
-            --data-urlencode text="${MSG}" \
-            --data-urlencode reply_markup="$(jq -n --arg run "$RUN_URL" --arg rel "$RELEASE_URL" \
-              '{inline_keyboard: [[{text: "🔗 View Run", url: $run}, {text: "⬇️ Download", url: $rel}]]}')"
-
-      - name: "📤 Telegram: Send file"
-        if: success() && env.BOT_TOKEN != '' && env.CHAT_ID != ''
-        continue-on-error: true
-        run: |
-          SEND_FILE="$ZIP_PATH"
-          [ "$USE_ANYKERNEL3" = "no" ] && SEND_FILE="$RAW_IMG_PATH"
-          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument" \
-            -F chat_id="${CHAT_ID}" \
-            -F document=@"${SEND_FILE}" \
-            -F caption="${BASE_NAME}"
-
-      # ---------------------------------------------------------------
-      # NOTIFY: FAILED
-      # ---------------------------------------------------------------
-      - name: "❌ Telegram: Notify build failed"
-        if: failure() && env.BOT_TOKEN != '' && env.CHAT_ID != ''
-        run: |
-          KSU_LABEL="No"
-          [ "$PATCH_KERNELSU" = "ksu-next" ] && KSU_LABEL="Yes (KernelSU-Next)"
-          [ "$PATCH_KERNELSU" = "ksu-original" ] && KSU_LABEL="Yes (KernelSU Original)"
-
-          ELAPSED=$(( $(date +%s) - START_EPOCH ))
-          DURATION="$((ELAPSED / 60))m $((ELAPSED % 60))s"
-
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
-          # Grab the last few lines of build.log so the error is visible right
-          # away without opening GitHub Actions. Backticks are stripped so they
-          # don't break Telegram's Markdown formatting.
-          ERROR_LOG=$(tail -n 8 kernel/build.log 2>/dev/null | tr -d '`' || true)
-          [ -z "$ERROR_LOG" ] && ERROR_LOG="(build.log not found, check the run log manually)"
-
-          MSG=$'❌ *Build Failed*\nKernel: `'"${KERNEL_NAME}"'`\nDevice: `'"${CODENAME}"'`\nKernel version: `'"${KERNEL_VERSION}"'`\nKernelSU: `'"${KSU_LABEL}"'`\n⏱ Duration: `'"${DURATION}"'`\n\n📄 *Last error:*\n\`\`\`\n'"${ERROR_LOG}"'\n\`\`\`'
-
-          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-            -d chat_id="${CHAT_ID}" \
-            -d parse_mode="Markdown" \
-            --data-urlencode text="${MSG}" \
-            --data-urlencode reply_markup="$(jq -n --arg url "$RUN_URL" \
-              '{inline_keyboard: [[{text: "🔗 View Log", url: $url}]]}')"
-
-      - name: 🧾 Upload build log on failure
-        if: failure()
+      - name: Upload log build
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-log
-          path: kernel/build.log
+          path: |
+            kernel/build-full.log
+            kernel/build.log
           if-no-files-found: ignore
+
+      - name: Publish ke GitHub Release
+        if: ${{ inputs.PUBLISH_RELEASE }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.BASE_NAME }}
+          body: |
+            Kernel: ${{ env.KERNEL_NAME }} (${{ env.KFULL }})
+            Device: ${{ env.CODENAME }} | Arch: ${{ env.TARGET_ARCH }}
+            Compiler: ${{ env.COMPILER }} | LTO: ${{ env.LTO_MODE }}
+            KernelSU: ${{ env.KSU_VARIANT }}
+            Commit source: ${{ env.KERNEL_COMMIT }}
+          files: dist/*
+
+      - name: Telegram - sukses (hasil + log)
+        if: ${{ success() && env.BOT_TOKEN != '' && env.CHAT_ID != '' }}
+        continue-on-error: true
+        run: |
+          source /tmp/tg.sh
+          ELAPSED=$(( $(date +%s) - START_EPOCH ))
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          tg_msg "✅ Build BERHASIL: ${BASE_NAME}
+          Kernel   : ${KFULL}
+          Compiler : ${COMPILER}
+          LTO      : ${LTO_MODE}
+          KernelSU : ${KSU_VARIANT}
+          Durasi   : $((ELAPSED/60))m $((ELAPSED%60))s
+          Run      : ${RUN_URL}"
+          for f in dist/*; do
+            tg_file "$f" "$(basename "$f") ($(du -h "$f" | cut -f1))"
+          done
+          LOG=kernel/build-full.log
+          [ -f "$LOG" ] || LOG=kernel/build.log
+          if [ -f "$LOG" ]; then
+            sleep 2
+            gzip -9 -c "$LOG" > build-log.gz
+            tg_file build-log.gz "Log lengkap (gzip)"
+          fi
+
+      - name: Telegram - gagal (log)
+        if: ${{ failure() && env.BOT_TOKEN != '' && env.CHAT_ID != '' }}
+        continue-on-error: true
+        run: |
+          source /tmp/tg.sh
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          tg_msg "❌ Build GAGAL: ${KERNEL_NAME} (${CODENAME})
+          Cek log di: ${RUN_URL}"
+          LOG=kernel/build-full.log
+          [ -f "$LOG" ] || LOG=kernel/build.log
+          if [ -f "$LOG" ]; then
+            gzip -9 -c "$LOG" > build-log-failed.gz
+            tg_file build-log-failed.gz "Log error (gzip)"
+          fi
