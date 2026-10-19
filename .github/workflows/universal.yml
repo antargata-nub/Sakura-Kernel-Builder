@@ -615,5 +615,3 @@ jobs:
             gzip -9 -c "$LOG" > build-log-failed.gz
             tg_file build-log-failed.gz "Log error (gzip)"
           fi
-
-```
