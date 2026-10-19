@@ -1,0 +1,756 @@
+name: Build Kernel Universal
+
+# Mendukung kernel 4.4 / 4.9 / 4.14 / 4.19 (versi dideteksi otomatis dari Makefile source)
+# Batas GitHub: maksimal 25 input workflow_dispatch. File ini memakai 24 input.
+
+on:
+  workflow_dispatch:
+    inputs:
+      KERNEL_SOURCE:
+        description: "URL repo source kernel"
+        required: true
+        type: string
+        default: "https://github.com/antargata-nub/android_kernel_xiaomi_sdm660_southwest-ng.git"
+      KERNEL_BRANCH:
+        description: "Branch source kernel"
+        required: true
+        type: string
+        default: "old/main-dynamic"
+      KERNEL_CONFIG:
+        description: "Defconfig dasar (relatif ke arch/<arch>/configs), mis. vendor/xiaomi/sdm660_defconfig atau lavender_defconfig"
+        required: true
+        type: string
+        default: "vendor/xiaomi/sdm660_defconfig"
+      KERNEL_FRAGMENT:
+        description: "Fragment config yang di-merge. Boleh lebih dari satu, pisahkan dengan spasi (kosongkan kalau tidak ada)"
+        required: false
+        type: string
+        default: "vendor/xiaomi/lavender.config"
+      KERNEL_NAME:
+        description: "Nama kernel (untuk nama file)"
+        required: true
+        type: string
+        default: "Southwest"
+      CODENAME:
+        description: "Codename device (dipakai di nama file dan device check AnyKernel3)"
+        required: true
+        type: string
+        default: "lavender"
+      TARGET_ARCH:
+        description: "Arsitektur target (hampir semua device modern = arm64)"
+        required: true
+        type: choice
+        options: [arm64, arm]
+        default: arm64
+      RUNNER:
+        description: "OS runner. Pakai ubuntu-22.04 kalau butuh clang lama (11-13) untuk kernel 4.4/4.9"
+        required: true
+        type: choice
+        options: [ubuntu-24.04, ubuntu-22.04]
+        default: ubuntu-24.04
+      COMPILER:
+        description: "Compiler. Saran: 4.4 -> clang-14 atau lebih lama, 4.9 -> clang-14..17, 4.19 -> clang-17..20"
+        required: true
+        type: choice
+        options: [clang-22, clang-21, clang-20, clang-19, clang-18, clang-17, clang-16, clang-15, clang-14, clang-13, clang-12, clang-11, custom]
+        default: clang-20
+      CLANG_CUSTOM_URL:
+        description: "Hanya untuk COMPILER=custom: URL arsip (.tar.gz/.tar.xz/.zip) atau repo git toolchain"
+        required: false
+        type: string
+        default: ""
+      CLANG_CUSTOM_BRANCH:
+        description: "Hanya untuk custom + repo git: branch/tag (opsional)"
+        required: false
+        type: string
+        default: ""
+      LTO_MODE:
+        description: "Mode LTO (otomatis dilewati kalau source tidak mendukung, mis. kebanyakan kernel 4.4)"
+        required: true
+        type: choice
+        options: [thin, full, none]
+        default: thin
+      EXTRA_KCFLAGS:
+        description: "KCFLAGS tambahan"
+        required: false
+        type: string
+        default: "-Wno-error"
+      EXTRA_MAKE_ARGS:
+        description: "Argumen make tambahan, pisahkan spasi (mis. LLVM_IAS=0). Berguna untuk kernel lama + clang baru"
+        required: false
+        type: string
+        default: ""
+      KSU_VARIANT:
+        description: "KernelSU yang disertakan (none = build polos, paling aman). Dukungan resmi KernelSU mulai 4.14; 4.4/4.9 tidak dijamin"
+        required: true
+        type: choice
+        options: [none, xxksu, ksu-next, ksu-original]
+        default: none
+      KSU_ENABLE_MODULES:
+        description: "Hanya ksu-next/original: aktifkan CONFIG_MODULES (dibutuhkan KPROBES). Mengubah kernel, berisiko"
+        required: false
+        type: boolean
+        default: true
+      KSU_PATCH_URL:
+        description: "Hanya ksu-next/original: URL patch manual hook. Kosong = otomatis (4.14/4.19 pakai patch bawaan, versi lain dilewati)"
+        required: false
+        type: string
+        default: ""
+      MANAGER_AUTO:
+        description: "Sertakan APK manager yang cocok dengan varian KSU di atas"
+        required: true
+        type: boolean
+        default: true
+      MGR_EXTRA:
+        description: "Manager tambahan (terbaru), pisahkan koma: original,next,rksu,kowsu. Kosongkan jika tidak perlu"
+        required: false
+        type: string
+        default: ""
+      BUILD_ANYKERNEL3:
+        description: "Kemas jadi zip AnyKernel3"
+        required: true
+        type: boolean
+        default: true
+      AK3_REPO:
+        description: "URL repo AnyKernel3 milikmu (kosong = AnyKernel3 generik + penyesuaian otomatis)"
+        required: false
+        type: string
+        default: ""
+      AK3_BLOCK:
+        description: "Hanya AnyKernel3 generik: path partisi boot (Qualcomm umumnya /dev/block/bootdevice/by-name/boot)"
+        required: false
+        type: string
+        default: "/dev/block/bootdevice/by-name/boot"
+      AK3_SLOT_DEVICE:
+        description: "Hanya AnyKernel3 generik: device A/B slot? (0 = bukan, 1 = ya, auto = deteksi)"
+        required: false
+        type: choice
+        options: ["0", "1", auto]
+        default: "0"
+      PUBLISH_RELEASE:
+        description: "Publikasikan ke GitHub Release (repo publik = hasil publik)"
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  build:
+    runs-on: ${{ inputs.RUNNER }}
+    timeout-minutes: 180
+    env:
+      KERNEL_SOURCE: ${{ inputs.KERNEL_SOURCE }}
+      KERNEL_BRANCH: ${{ inputs.KERNEL_BRANCH }}
+      KERNEL_CONFIG: ${{ inputs.KERNEL_CONFIG }}
+      KERNEL_FRAGMENT: ${{ inputs.KERNEL_FRAGMENT }}
+      KERNEL_NAME: ${{ inputs.KERNEL_NAME }}
+      CODENAME: ${{ inputs.CODENAME }}
+      TARGET_ARCH: ${{ inputs.TARGET_ARCH }}
+      COMPILER: ${{ inputs.COMPILER }}
+      CLANG_CUSTOM_URL: ${{ inputs.CLANG_CUSTOM_URL }}
+      CLANG_CUSTOM_BRANCH: ${{ inputs.CLANG_CUSTOM_BRANCH }}
+      LTO_MODE: ${{ inputs.LTO_MODE }}
+      EXTRA_KCFLAGS: ${{ inputs.EXTRA_KCFLAGS }}
+      EXTRA_MAKE_ARGS: ${{ inputs.EXTRA_MAKE_ARGS }}
+      KSU_VARIANT: ${{ inputs.KSU_VARIANT }}
+      KSU_ENABLE_MODULES: ${{ inputs.KSU_ENABLE_MODULES }}
+      KSU_PATCH_URL: ${{ inputs.KSU_PATCH_URL }}
+      MANAGER_AUTO: ${{ inputs.MANAGER_AUTO }}
+      MGR_EXTRA: ${{ inputs.MGR_EXTRA }}
+      BUILD_ANYKERNEL3: ${{ inputs.BUILD_ANYKERNEL3 }}
+      AK3_REPO: ${{ inputs.AK3_REPO }}
+      AK3_BLOCK: ${{ inputs.AK3_BLOCK }}
+      AK3_SLOT_DEVICE: ${{ inputs.AK3_SLOT_DEVICE }}
+      PUBLISH_RELEASE: ${{ inputs.PUBLISH_RELEASE }}
+      # Token Telegram opsional: buat di Settings > Secrets and variables > Actions
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      CHAT_ID: ${{ secrets.CHAT_ID }}
+      GH_TOKEN: ${{ github.token }}
+      KBUILD_BUILD_USER: "github-actions"
+      KBUILD_BUILD_HOST: "ci"
+
+    steps:
+      - name: Catat waktu mulai
+        run: echo "START_EPOCH=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Telegram - siapkan helper
+        if: ${{ env.BOT_TOKEN != '' && env.CHAT_ID != '' }}
+        run: |
+          cat > /tmp/tg.sh <<'EOF'
+          API="https://api.telegram.org/bot${BOT_TOKEN}"
+          tg_msg() {
+            curl -sS -X POST "$API/sendMessage" \
+              --data-urlencode chat_id="$CHAT_ID" \
+              --data-urlencode text="$1" \
+              -d disable_web_page_preview=true -o /tmp/tg_resp.json || true
+            jq -e '.ok' /tmp/tg_resp.json >/dev/null 2>&1 \
+              || echo "::warning::Telegram menolak pesan: $(cat /tmp/tg_resp.json 2>/dev/null)"
+          }
+          tg_file() {  # path caption
+            local sz
+            sz=$(stat -c %s "$1")
+            if [ "$sz" -gt 49000000 ]; then
+              tg_msg "File $(basename "$1") terlalu besar untuk Telegram ($((sz/1048576)) MB). Ambil dari Release atau Artifacts."
+              return 0
+            fi
+            curl -sS -X POST "$API/sendDocument" \
+              -F chat_id="$CHAT_ID" -F document=@"$1" -F caption="$2" -o /tmp/tg_resp.json || true
+            jq -e '.ok' /tmp/tg_resp.json >/dev/null 2>&1 \
+              || echo "::warning::Telegram menolak file: $(cat /tmp/tg_resp.json 2>/dev/null)"
+          }
+          EOF
+
+      - name: Telegram - build dimulai
+        if: ${{ env.BOT_TOKEN != '' && env.CHAT_ID != '' }}
+        continue-on-error: true
+        run: |
+          source /tmp/tg.sh
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          tg_msg "Build dimulai
+          -Kernel   : ${KERNEL_NAME} (${CODENAME})
+          -Source   : ${KERNEL_SOURCE} @ ${KERNEL_BRANCH}
+          -Config   : ${KERNEL_CONFIG} ${KERNEL_FRAGMENT}
+          -Arch     : ${TARGET_ARCH}
+          -Compiler : ${COMPILER}
+          -LTO      : ${LTO_MODE}
+          -KernelSU : ${KSU_VARIANT}
+          -Run      : ${RUN_URL}"
+
+      - name: Install dependensi
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex libssl-dev libelf-dev libncurses-dev cpio zip unzip jq \
+            python3 ccache git wget curl lsb-release software-properties-common gnupg \
+            device-tree-compiler u-boot-tools lz4 xz-utils rsync \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+
+      - name: Install compiler (${{ inputs.COMPILER }})
+        run: |
+          set -euo pipefail
+          if [ "$COMPILER" = "custom" ]; then
+            [ -n "$CLANG_CUSTOM_URL" ] || { echo "::error::COMPILER=custom tapi CLANG_CUSTOM_URL kosong"; exit 1; }
+            mkdir -p toolchain/clang
+            case "$CLANG_CUSTOM_URL" in
+              *.tar.gz|*.tgz) curl -fLsS "$CLANG_CUSTOM_URL" | tar -xz -C toolchain/clang ;;
+              *.tar.xz)       curl -fLsS "$CLANG_CUSTOM_URL" | tar -xJ -C toolchain/clang ;;
+              *.zip)
+                curl -fLsS -o /tmp/toolchain.zip "$CLANG_CUSTOM_URL"
+                unzip -q /tmp/toolchain.zip -d toolchain/clang ;;
+              *)
+                if [ -n "$CLANG_CUSTOM_BRANCH" ]; then
+                  git clone --depth=1 -b "$CLANG_CUSTOM_BRANCH" "$CLANG_CUSTOM_URL" toolchain/clang
+                else
+                  git clone --depth=1 "$CLANG_CUSTOM_URL" toolchain/clang
+                fi ;;
+            esac
+            CLANG_BIN=$(find "$PWD/toolchain/clang" -maxdepth 4 -type f -name clang | head -n1 | xargs -r dirname)
+            [ -n "$CLANG_BIN" ] || { echo "::error::Binary clang tidak ditemukan di toolchain custom"; exit 1; }
+            echo "Toolchain custom: $CLANG_BIN"
+            echo "$CLANG_BIN" >> "$GITHUB_PATH"
+          else
+            V="${COMPILER#clang-}"
+            # Coba repo Ubuntu dulu; kalau tidak ada, pakai apt.llvm.org
+            if ! sudo apt-get install -y --no-install-recommends "clang-$V" "lld-$V" "llvm-$V"; then
+              wget -q https://apt.llvm.org/llvm.sh
+              chmod +x llvm.sh
+              sudo ./llvm.sh "$V" all || { echo "::error::clang-$V tidak tersedia di runner ini. Coba ganti RUNNER (22.04 untuk clang lama) atau versi compiler lain"; exit 1; }
+            fi
+            echo "/usr/lib/llvm-$V/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Cek toolchain
+        run: |
+          missing=0
+          for t in clang ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-strip \
+                   aarch64-linux-gnu-gcc arm-linux-gnueabi-gcc; do
+            if command -v "$t" >/dev/null; then echo "ok      $t -> $(command -v "$t")"
+            else echo "::error::Tidak ditemukan: $t"; missing=1; fi
+          done
+          [ "$missing" = 0 ] || { echo "Toolchain tidak lengkap (untuk custom: pastikan bundelnya memuat lld dan llvm-*)"; exit 1; }
+          clang --version | head -1
+          ld.lld --version
+
+      - name: Clone source kernel
+        run: |
+          git clone --depth=1 --recurse-submodules --shallow-submodules \
+            -b "$KERNEL_BRANCH" "$KERNEL_SOURCE" kernel
+          cd kernel
+          if git submodule status | grep -qE '^-'; then
+            git submodule update --init --recursive
+          fi
+          echo "KERNEL_COMMIT=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+
+      # ------------------------------------------------------------
+      # Deteksi versi kernel + penyesuaian per versi
+      # ------------------------------------------------------------
+      - name: Deteksi versi kernel dan profil
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          V=$(sed -n 's/^VERSION *= *//p' Makefile | head -n1)
+          P=$(sed -n 's/^PATCHLEVEL *= *//p' Makefile | head -n1)
+          S=$(sed -n 's/^SUBLEVEL *= *//p' Makefile | head -n1)
+          KVER="${V}.${P}"
+          echo "KVER=${KVER}" >> "$GITHUB_ENV"
+          echo "KFULL=${V}.${P}.${S}" >> "$GITHUB_ENV"
+          echo "Versi kernel terdeteksi: ${V}.${P}.${S}"
+
+          CLANG_MAJOR=$(clang --version | grep -oE 'version [0-9]+' | head -n1 | grep -oE '[0-9]+' || echo 0)
+          echo "Clang major: ${CLANG_MAJOR}"
+
+          case "$KVER" in
+            4.4)
+              echo "Profil: kernel 4.4"
+              [ "$CLANG_MAJOR" -le 14 ] || echo "::warning::Kernel 4.4 dengan clang-${CLANG_MAJOR}: biasanya lebih lancar dengan clang 14 atau lebih lama. Kalau gagal, coba turunkan versi compiler atau isi EXTRA_MAKE_ARGS (mis. LLVM_IAS=0)."
+              [ "$LTO_MODE" = "none" ] || echo "::notice::Kebanyakan kernel 4.4 tidak punya LTO Clang; kalau tidak ada, LTO otomatis dilewati."
+              ;;
+            4.9)
+              echo "Profil: kernel 4.9"
+              [ "$CLANG_MAJOR" -le 17 ] || echo "::warning::Kernel 4.9 dengan clang-${CLANG_MAJOR}: kalau error, coba clang 14-17."
+              ;;
+            4.14|4.19)
+              echo "Profil: kernel ${KVER}"
+              ;;
+            *)
+              echo "::warning::Versi kernel ${KVER} di luar 4.4/4.9/4.14/4.19; tetap dicoba dengan profil umum."
+              ;;
+          esac
+
+          if [ "$KSU_VARIANT" != "none" ]; then
+            case "$KVER" in
+              4.4|4.9) echo "::warning::KernelSU resmi mendukung non-GKI mulai 4.14. Untuk ${KVER} butuh backport di source kernel; build bisa gagal atau KSU tidak berfungsi." ;;
+            esac
+          fi
+
+          # Perbaikan umum dtc "multiple definition of yylloc" (kernel 4.4/4.9 + gcc baru)
+          for f in scripts/dtc/dtc-lexer.lex.c_shipped scripts/dtc/dtc-lexer.l; do
+            if [ -f "$f" ] && grep -q '^YYLTYPE yylloc;' "$f"; then
+              sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/' "$f"
+              echo "Patch yylloc diterapkan: $f"
+            fi
+          done
+
+      # ------------------------------------------------------------
+      # Patch manual hook (khusus ksu-next / ksu-original)
+      # ------------------------------------------------------------
+      - name: Terapkan patch manual hook KSU
+        if: ${{ inputs.KSU_VARIANT == 'ksu-next' || inputs.KSU_VARIANT == 'ksu-original' }}
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          URL="$KSU_PATCH_URL"
+          if [ -z "$URL" ]; then
+            case "$KVER" in
+              4.14|4.19)
+                URL="https://raw.githubusercontent.com/kucingoranye/kernel_patches/main/manual_hook-rksu-ksun/kernel-4.19_5.4.patch" ;;
+              *)
+                echo "::warning::Tidak ada patch bawaan untuk kernel ${KVER}. Isi KSU_PATCH_URL kalau punya patch yang cocok. Melewati tahap ini."
+                exit 0 ;;
+            esac
+          fi
+          echo "Mengunduh patch: $URL"
+          curl -fLsS -o /tmp/ksun.patch "$URL"
+
+          echo "Menerapkan patch dengan patch -p1..."
+          patch -p1 -N --no-backup-if-mismatch < /tmp/ksun.patch || {
+            echo "::warning::Ada bagian patch yang reject (.rej), proses tetap dilanjutkan."
+            find . -name '*.rej' -print
+          }
+          echo "Tahap patch selesai."
+
+      - name: Validasi config
+        working-directory: kernel
+        run: |
+          CFG_DIR="arch/${TARGET_ARCH}/configs"
+          if [ ! -f "$CFG_DIR/$KERNEL_CONFIG" ]; then
+            echo "::error::$CFG_DIR/$KERNEL_CONFIG tidak ada"
+            echo "Defconfig yang tersedia (contoh):"
+            ls "$CFG_DIR" | head -n 40
+            exit 1
+          fi
+          for frag in $KERNEL_FRAGMENT; do
+            if [ ! -f "$CFG_DIR/$frag" ]; then
+              echo "::error::$CFG_DIR/$frag tidak ada"
+              exit 1
+            fi
+          done
+
+      # ------------------------------------------------------------
+      # Integrasi KernelSU (hanya kalau dipilih)
+      # ------------------------------------------------------------
+      - name: Integrasi KernelSU
+        if: ${{ inputs.KSU_VARIANT != 'none' }}
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          # Cegah driver KSU ganda: ini penyebab umum kernel tidak boot
+          if [ -d drivers/kernelsu ] || [ -d KernelSU ] || \
+             grep -qi "kernelsu" drivers/Kconfig drivers/Makefile 2>/dev/null; then
+            echo "::error::Source ini sudah memuat KernelSU. Pilih KSU_VARIANT=none."
+            exit 1
+          fi
+
+          case "$KSU_VARIANT" in
+            xxksu)
+              URL="https://raw.githubusercontent.com/backslashxx/KernelSU/refs/heads/master/kernel/setup.sh"
+              REF="master" ;;
+            ksu-next)
+              URL="https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh"
+              REF="" ;;
+            ksu-original)
+              URL="https://raw.githubusercontent.com/tiann/KernelSU/v0.6.6/kernel/setup.sh"
+              REF="v0.6.6" ;;
+          esac
+
+          curl -fLsS -o /tmp/ksu_setup.sh "$URL"
+          if [ -n "$REF" ]; then bash /tmp/ksu_setup.sh "$REF"; else bash /tmp/ksu_setup.sh; fi
+
+          echo "--- hasil integrasi"
+          ls -la drivers/ | grep -i -E "kernelsu|ksu" || true
+          grep -n -i "kernelsu" drivers/Kconfig drivers/Makefile || true
+          if ! grep -qi "kernelsu" drivers/Kconfig; then
+            echo "::error::setup.sh selesai tapi drivers/Kconfig tidak memuat KernelSU"
+            exit 1
+          fi
+
+      # ------------------------------------------------------------
+      # Build
+      # ------------------------------------------------------------
+      - name: Build kernel
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          exec > >(tee -a build-full.log) 2>&1
+          OUT_DIR=out
+          CFG_DIR="arch/${TARGET_ARCH}/configs"
+
+          export ARCH="$TARGET_ARCH" SUBARCH="$TARGET_ARCH"
+          MAKE_ARGS=(
+            O="$OUT_DIR" ARCH="$TARGET_ARCH" SUBARCH="$TARGET_ARCH"
+            CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm
+            OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
+          )
+          if [ "$TARGET_ARCH" = "arm64" ]; then
+            MAKE_ARGS+=(
+              CROSS_COMPILE=aarch64-linux-gnu-
+              CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+              CLANG_TRIPLE=aarch64-linux-gnu-
+            )
+          else
+            MAKE_ARGS+=(
+              CROSS_COMPILE=arm-linux-gnueabi-
+              CLANG_TRIPLE=arm-linux-gnueabi-
+            )
+          fi
+          if [ -n "$EXTRA_KCFLAGS" ]; then
+            MAKE_ARGS+=(KCFLAGS="$EXTRA_KCFLAGS")
+          fi
+          if [ -n "$EXTRA_MAKE_ARGS" ]; then
+            read -r -a EXTRA_ARR <<< "$EXTRA_MAKE_ARGS"
+            MAKE_ARGS+=("${EXTRA_ARR[@]}")
+          fi
+
+          cfg() { scripts/config --file "$OUT_DIR/.config" "$@"; }
+          has_sym() { grep -qE "^[[:space:]]*config $1[[:space:]]*\$" arch/Kconfig 2>/dev/null; }
+
+          echo "Kernel : ${KFULL} (profil ${KVER})"
+          echo "Arch   : $TARGET_ARCH"
+          echo "Clang  : $(clang --version | head -1)"
+          echo "LTO    : $LTO_MODE"
+          echo "KSU    : $KSU_VARIANT"
+          mkdir -p "$OUT_DIR"
+
+          # 1. Merge config (defconfig + satu atau lebih fragment)
+          FILES=("$CFG_DIR/$KERNEL_CONFIG")
+          for frag in $KERNEL_FRAGMENT; do FILES+=("$CFG_DIR/$frag"); done
+          scripts/kconfig/merge_config.sh -m -O "$OUT_DIR" "${FILES[@]}"
+
+          # 2. LTO (mendeteksi gaya Kconfig: legacy THINLTO atau choice LTO_CLANG_THIN/FULL)
+          LTO_EFF="$LTO_MODE"
+          LTO_STYLE=""
+          if [ "$LTO_EFF" != "none" ]; then
+            if [ "$TARGET_ARCH" != "arm64" ]; then
+              echo "::warning::LTO hanya dicoba untuk arm64; dilewati."
+              LTO_EFF=none
+            elif has_sym LTO_CLANG_THIN; then
+              LTO_STYLE=choice
+            elif has_sym LTO_CLANG; then
+              LTO_STYLE=legacy
+              if [ "$LTO_EFF" = "thin" ] && ! has_sym THINLTO; then
+                echo "::warning::Source tidak punya THINLTO, beralih ke Full LTO."
+                LTO_EFF=full
+              fi
+            else
+              echo "::warning::Source kernel ${KVER} ini tidak mendukung LTO Clang; LTO dilewati."
+              LTO_EFF=none
+            fi
+          fi
+          echo "LTO efektif: $LTO_EFF ($LTO_STYLE)"
+
+          case "${LTO_EFF}:${LTO_STYLE}" in
+            thin:choice)  cfg -d LTO_NONE -d LTO_CLANG_FULL -e LTO_CLANG_THIN ;;
+            full:choice)  cfg -d LTO_NONE -d LTO_CLANG_THIN -e LTO_CLANG_FULL ;;
+            thin:legacy)  cfg -e LTO_CLANG -e THINLTO ;;
+            full:legacy)  cfg -e LTO_CLANG -d THINLTO ;;
+            *)            cfg -d LTO_CLANG -d THINLTO -d LTO_CLANG_THIN -d LTO_CLANG_FULL ;;
+          esac
+
+          # 3. KernelSU (hanya kalau dipilih)
+          if [ "$KSU_VARIANT" != "none" ]; then
+            cfg -e KSU
+            if [ "$KSU_VARIANT" = "xxksu" ]; then
+              # Mode syscall-table: tanpa kprobes dan tanpa patch hook di source
+              if ! grep -RqsE "config KSU_TAMPER_SYSCALL_TABLE" drivers/kernelsu/ KernelSU/ 2>/dev/null; then
+                echo "::error::Versi xxksu ini tidak punya KSU_TAMPER_SYSCALL_TABLE"
+                exit 1
+              fi
+              cfg -d KSU_WITH_KPROBES -e KSU_TAMPER_SYSCALL_TABLE
+            else
+              # ksu-next / ksu-original memakai kprobes (KPROBES di kernel 4.x bergantung pada MODULES)
+              if [ "$KSU_ENABLE_MODULES" = "true" ]; then
+                echo "== Mengaktifkan CONFIG_MODULES & KProbes =="
+                cfg -e MODULES
+              fi
+              cfg -e KPROBES -e HAVE_KPROBES -e KPROBE_EVENTS -e OVERLAY_FS
+            fi
+          fi
+
+          # 4. Finalisasi + verifikasi
+          make "${MAKE_ARGS[@]}" olddefconfig
+          echo "== Status di .config:"
+          grep -E "^CONFIG_(CC_IS_CLANG|LTO_CLANG|LTO_CLANG_THIN|LTO_CLANG_FULL|THINLTO|KPROBES|COMPAT_VDSO|MODULES|OVERLAY_FS|KSU[A-Z_]*)=" "$OUT_DIR/.config" || true
+
+          if [ "$LTO_EFF" = "thin" ] && ! grep -qE "^CONFIG_(THINLTO|LTO_CLANG_THIN)=y" "$OUT_DIR/.config"; then
+            echo "::error::Thin LTO diminta tapi tidak aktif setelah olddefconfig (cek dependensi/arch support)"; exit 1
+          fi
+          if [ "$LTO_EFF" = "full" ] && ! grep -qE "^CONFIG_(LTO_CLANG|LTO_CLANG_FULL)=y" "$OUT_DIR/.config"; then
+            echo "::error::Full LTO diminta tapi tidak aktif setelah olddefconfig"; exit 1
+          fi
+          echo "LTO_EFF=$LTO_EFF" >> "$GITHUB_ENV"
+
+          if [ "$KSU_VARIANT" != "none" ]; then
+            if ! grep -q "^CONFIG_KSU=y" "$OUT_DIR/.config"; then
+              echo "=== DIAGNOSA: CONFIG_KSU tidak aktif ==="
+              echo "--- baris KSU di .config"
+              grep -n "KSU" "$OUT_DIR/.config" || echo "(tidak ada sama sekali)"
+              echo "::error::CONFIG_KSU tidak aktif"
+              exit 1
+            fi
+            if [ "$KSU_VARIANT" = "xxksu" ]; then
+              grep -q "^CONFIG_KSU_TAMPER_SYSCALL_TABLE=y" "$OUT_DIR/.config" || { echo "::error::KSU_TAMPER_SYSCALL_TABLE tidak aktif"; exit 1; }
+            else
+              grep -q "^CONFIG_KPROBES=y" "$OUT_DIR/.config" || { echo "::error::KPROBES tidak aktif; varian ini butuh kprobes (coba centang KSU_ENABLE_MODULES)"; exit 1; }
+            fi
+          fi
+
+          # 5. Kompilasi
+          make -j"$(nproc)" "${MAKE_ARGS[@]}" 2>&1 | tee build.log
+
+          # 6. Cek hasil
+          if [ "$KSU_VARIANT" != "none" ]; then
+            grep -qi "ksu" "$OUT_DIR/System.map" || { echo "::error::Simbol KSU tidak ada di kernel hasil build"; exit 1; }
+          fi
+
+          BOOT="$OUT_DIR/arch/${TARGET_ARCH}/boot"
+          if [ "$TARGET_ARCH" = "arm64" ]; then
+            CANDIDATES="Image.gz-dtb Image.lz4-dtb Image.gz Image.lz4 Image"
+          else
+            CANDIDATES="zImage-dtb zImage"
+          fi
+          IMG=""
+          for f in $CANDIDATES; do
+            if [ -f "$BOOT/$f" ]; then IMG="$BOOT/$f"; break; fi
+          done
+          [ -n "$IMG" ] || { echo "::error::Image kernel tidak ditemukan di $BOOT"; ls -la "$BOOT" || true; exit 1; }
+          case "$(basename "$IMG")" in
+            *-dtb) ;;
+            *) echo "::warning::Yang terbentuk $(basename "$IMG") tanpa DTB tergabung. Kalau device kamu butuh DTB tergabung (umumnya kernel 4.4/4.9 Qualcomm), kernel ini tidak akan boot. Device 4.14+ dengan dtb/dtbo terpisah normal." ;;
+          esac
+          echo "IMG_PATH=$(pwd)/$IMG" >> "$GITHUB_ENV"
+          if [ -f "$BOOT/dtbo.img" ]; then echo "DTBO_PATH=$(pwd)/$BOOT/dtbo.img" >> "$GITHUB_ENV"; fi
+
+      # ------------------------------------------------------------
+      # Penamaan + paket
+      # ------------------------------------------------------------
+      - name: Siapkan nama dan folder hasil
+        run: |
+          DATE=$(date +%Y%m%d)
+          case "$KSU_VARIANT" in
+            xxksu)        KSU_TAG="-XXKSU" ;;
+            ksu-next)     KSU_TAG="-KSUN" ;;
+            ksu-original) KSU_TAG="-KSU" ;;
+            *)            KSU_TAG="" ;;
+          esac
+          BASE_NAME="${KERNEL_NAME}-${CODENAME}-${KVER}-${DATE}${KSU_TAG}"
+          echo "BASE_NAME=${BASE_NAME}" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=build-${{ github.run_id }}" >> "$GITHUB_ENV"
+          mkdir -p dist
+          cp "$IMG_PATH" "dist/${BASE_NAME}-$(basename "$IMG_PATH")"
+
+      - name: Kemas AnyKernel3
+        if: ${{ inputs.BUILD_ANYKERNEL3 }}
+        run: |
+          set -euo pipefail
+          if [ -n "$AK3_REPO" ]; then
+            git clone --depth=1 "$AK3_REPO" AnyKernel3
+          else
+            git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel3
+          fi
+          rm -rf AnyKernel3/.git AnyKernel3/*.zip
+          cp "$IMG_PATH" AnyKernel3/
+          if [ -n "${DTBO_PATH:-}" ] && [ -f "$DTBO_PATH" ]; then
+            cp "$DTBO_PATH" AnyKernel3/
+          fi
+
+          if [ -z "$AK3_REPO" ]; then
+            AKS=AnyKernel3/anykernel.sh
+            sed -i "s|^kernel.string=.*|kernel.string=${BASE_NAME}|" "$AKS"
+            sed -i "s/^device.name1=.*/device.name1=${CODENAME}/" "$AKS"
+            for n in 2 3 4 5; do sed -i "s|^device.name${n}=.*|device.name${n}=|" "$AKS"; done
+            sed -i -E "s#^(BLOCK|block)=.*#\1=${AK3_BLOCK};#" "$AKS"
+            sed -i -E "s#^(IS_SLOT_DEVICE|is_slot_device)=.*#\1=${AK3_SLOT_DEVICE};#" "$AKS"
+            sed -i -E 's#^dump_boot;#split_boot;#; s#^write_boot;#flash_boot;#' "$AKS"
+          fi
+
+          (cd AnyKernel3 && zip -r9 "../dist/${BASE_NAME}.zip" . -x ".git*" -x "*.zip")
+
+      # ------------------------------------------------------------
+      # Manager APK
+      # ------------------------------------------------------------
+      - name: Unduh manager APK
+        run: |
+          set -uo pipefail
+          mkdir -p dist
+          : > manager_info.txt
+
+          latest() {  # repo label
+            local api tag url
+            api=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/$1/releases/latest") || { echo "::warning::Gagal membaca release $1"; return 0; }
+            tag=$(jq -r '.tag_name' <<<"$api")
+            url=$(jq -r '[.assets[]? | select(.name|test("\\.apk$")) | select(.name|test("debug";"i")|not)][0].browser_download_url // empty' <<<"$api")
+            if [ -z "$url" ]; then echo "::warning::Tidak ada APK di release terbaru $1"; return 0; fi
+            curl -fLsS -o "dist/Manager-$2-${tag}.apk" "$url" \
+              && echo "$2 ${tag}" >> manager_info.txt \
+              || echo "::warning::Gagal mengunduh APK $2"
+          }
+
+          legacy() {
+            local url="https://github.com/tiann/KernelSU/releases/download/v0.6.6/KernelSU_v0.6.6_11184-release.apk"
+            curl -fLsS -o "dist/Manager-KernelSU-v0.6.6.apk" "$url" \
+              && echo "KernelSU-legacy v0.6.6" >> manager_info.txt \
+              || echo "::warning::Gagal mengunduh manager v0.6.6"
+          }
+
+          if [ "$MANAGER_AUTO" = "true" ]; then
+            case "$KSU_VARIANT" in
+              ksu-original) legacy ;;
+              ksu-next)     latest KernelSU-Next/KernelSU-Next KernelSU-Next ;;
+              xxksu)        latest tiann/KernelSU KernelSU ;;
+            esac
+          fi
+
+          EXTRA=",$(echo "$MGR_EXTRA" | tr 'A-Z' 'a-z' | tr -d ' '),"
+          case "$EXTRA" in *,original,*) latest tiann/KernelSU KernelSU ;; esac
+          case "$EXTRA" in *,next,*)     latest KernelSU-Next/KernelSU-Next KernelSU-Next ;; esac
+          case "$EXTRA" in *,rksu,*)     latest rsuntk/KernelSU RKSU ;; esac
+          case "$EXTRA" in *,kowsu,*)    latest KOWX712/KernelSU KowSU ;; esac
+
+          echo "--- manager yang disertakan"
+          cat manager_info.txt
+          ls -la dist
+          exit 0
+
+      - name: Upload artifact hasil
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BASE_NAME }}
+          path: dist/*
+
+      - name: Upload log build
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: |
+            kernel/build-full.log
+            kernel/build.log
+          if-no-files-found: ignore
+
+      - name: Publish ke GitHub Release
+        if: ${{ inputs.PUBLISH_RELEASE }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.BASE_NAME }}
+          body: |
+            Kernel: ${{ env.KERNEL_NAME }} (${{ env.KFULL }})
+            Device: ${{ env.CODENAME }}
+            Arch: ${{ env.TARGET_ARCH }}
+            Compiler: ${{ env.COMPILER }}
+            LTO: ${{ env.LTO_EFF }}
+            KernelSU: ${{ env.KSU_VARIANT }}
+            Commit source: ${{ env.KERNEL_COMMIT }}
+          files: dist/*
+
+      # ------------------------------------------------------------
+      # Telegram (opsional, lewat Secrets BOT_TOKEN dan CHAT_ID)
+      # ------------------------------------------------------------
+      - name: Telegram - sukses (hasil + log)
+        if: ${{ success() && env.BOT_TOKEN != '' && env.CHAT_ID != '' }}
+        continue-on-error: true
+        run: |
+          source /tmp/tg.sh
+          ELAPSED=$(( $(date +%s) - START_EPOCH ))
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          tg_msg "Build BERHASIL: ${BASE_NAME}
+          Kernel   : ${KFULL}
+          Compiler : ${COMPILER}
+          LTO      : ${LTO_EFF}
+          KernelSU : ${KSU_VARIANT}
+          Durasi   : $((ELAPSED/60))m $((ELAPSED%60))s
+          Run      : ${RUN_URL}"
+          for f in dist/*; do
+            tg_file "$f" "$(basename "$f")  ($(du -h "$f" | cut -f1))"
+          done
+          LOG=kernel/build-full.log
+          [ -f "$LOG" ] || LOG=kernel/build.log
+          if [ -f "$LOG" ]; then
+            sleep 2
+            gzip -9 -c "$LOG" > build-log.gz
+            tg_file build-log.gz "Log lengkap (gzip)"
+          fi
+
+      - name: Telegram - gagal (log)
+        if: ${{ failure() && env.BOT_TOKEN != '' && env.CHAT_ID != '' }}
+        continue-on-error: true
+        run: |
+          source /tmp/tg.sh
+          ELAPSED=$(( $(date +%s) - START_EPOCH ))
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          STEP=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
+            --jq '.jobs[0].steps[] | select(.conclusion=="failure") | .name' 2>/dev/null | head -n1 || true)
+          [ -n "$STEP" ] || STEP="(tidak diketahui)"
+          tg_msg "Build GAGAL: ${CODENAME} (kernel ${KVER:-?})
+          Langkah  : ${STEP}
+          Compiler : ${COMPILER}
+          LTO      : ${LTO_MODE}
+          KernelSU : ${KSU_VARIANT}
+          Durasi   : $((ELAPSED/60))m $((ELAPSED%60))s
+          Run      : ${RUN_URL}"
+          LOG=kernel/build-full.log
+          [ -f "$LOG" ] || LOG=kernel/build.log
+          if [ -f "$LOG" ]; then
+            sleep 2
+            grep -nE "error:|\*\*\* |Error [0-9]+$|DIAGNOSA" "$LOG" | head -n 80 > errors.txt || true
+            [ -s errors.txt ] || tail -n 100 "$LOG" > errors.txt
+            tg_file errors.txt "Ringkasan error"
+            gzip -9 -c "$LOG" > build-log.gz
+            tg_file build-log.gz "Log lengkap (gzip)"
+          else
+            tg_msg "Log build belum ada (gagal sebelum tahap kompilasi). Buka Run di atas, langkah: ${STEP}"
+          fi
