@@ -277,7 +277,7 @@ jobs:
                 *.tar.gz|*.tgz)  curl -fLsS "$URL" | tar -xz -C toolchain/clang ;;
                 *.tar.zst)       curl -fLsS "$URL" | tar --zstd -x -C toolchain/clang ;;
                 *)               curl -fLsS "$URL" | tar -x -C toolchain/clang ;;
-              endcase
+              esac
               ;;
             proton-clang-13)
               echo "Mengunduh Proton Clang 13..."
@@ -478,6 +478,10 @@ jobs:
 
           # Nonaktifkan stack protector strong jika compiler tidak mendukung
           cfg -d CC_STACKPROTECTOR_STRONG || true
+
+          # Nonaktifkan zero var init yang diblokir Clang 13
+          cfg -d INIT_STACK_ALL_ZERO || true
+          cfg -e INIT_STACK_NONE || true
 
           # Konfigurasi LTO
           if [ "$LTO_MODE" != "none" ] && [ "$TARGET_ARCH" = "arm64" ]; then
