@@ -7,7 +7,7 @@ on:
         description: "URL repo source kernel"
         required: true
         type: string
-        default: "https://github.com/antargata-nub/android_kernel_xiaomi_sdm660_southwest-ng.git"
+        default: 
       KERNEL_BRANCH:
         description: "Branch source kernel"
         required: true
@@ -17,12 +17,12 @@ on:
         description: "Defconfig dasar (relatif ke arch/<arch>/configs), mis. vendor/xiaomi/sdm660_defconfig atau lavender_defconfig"
         required: true
         type: string
-        default: "vendor/xiaomi/sdm660_defconfig"
+        default: 
       KERNEL_FRAGMENT:
         description: "Fragment config (pisahkan spasi, kosongkan jika tidak ada), mis. vendor/xiaomi/lavender.config"
         required: false
         type: string
-        default: "vendor/xiaomi/lavender.config"
+        default: 
       KERNEL_NAME:
         description: "Nama kernel (untuk penamaan file)"
         required: true
