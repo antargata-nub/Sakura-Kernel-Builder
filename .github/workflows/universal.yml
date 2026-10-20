@@ -434,12 +434,13 @@ jobs:
               CLANG_TRIPLE=aarch64-linux-gnu-
             )
           else
-            MAKE_ARGS+=(
-              CROSS_COMPILE=arm-linux-gnueabi-
-              CLANG_TRIPLE=arm-linux-gnueabi-
-            )
+          
+            KCFLAGS_COMBINED="-Wno-error -mllvm -enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang"
+          if [ -n "$EXTRA_KCFLAGS" ]; then
+            KCFLAGS_COMBINED="$KCFLAGS_COMBINED $EXTRA_KCFLAGS"
           fi
-          if [ -n "$EXTRA_KCFLAGS" ]; then MAKE_ARGS+=(KCFLAGS="$EXTRA_KCFLAGS"); fi
+          MAKE_ARGS+=(KCFLAGS="$KCFLAGS_COMBINED")
+
           if [ -n "$EXTRA_MAKE_ARGS" ]; then
             read -r -a EXTRA_ARR <<< "$EXTRA_MAKE_ARGS"
             MAKE_ARGS+=("${EXTRA_ARR[@]}")
