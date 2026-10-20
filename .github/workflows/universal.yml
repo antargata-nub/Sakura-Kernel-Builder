@@ -7,7 +7,7 @@ on:
         description: "URL repo source kernel"
         required: true
         type: string
-        default: 
+        default: ""
       KERNEL_BRANCH:
         description: "Branch source kernel"
         required: true
@@ -17,12 +17,12 @@ on:
         description: "Defconfig dasar (relatif ke arch/<arch>/configs), mis. vendor/xiaomi/sdm660_defconfig atau lavender_defconfig"
         required: true
         type: string
-        default: 
+        default: ""
       KERNEL_FRAGMENT:
         description: "Fragment config (pisahkan spasi, kosongkan jika tidak ada), mis. vendor/xiaomi/lavender.config"
         required: false
         type: string
-        default: 
+        default: ""
       KERNEL_NAME:
         description: "Nama kernel (untuk penamaan file)"
         required: true
@@ -44,7 +44,7 @@ on:
         required: true
         type: choice
         options: [ubuntu-24.04, ubuntu-22.04]
-        default: ubuntu-24.04
+        default: ubuntu-22.04
       COMPILER:
         description: "Pilih Compiler / Toolchain"
         required: true
@@ -68,7 +68,7 @@ on:
           - clang-12
           - clang-11
           - custom
-        default: zyc-clang-20
+        default: proton-clang-13
       CLANG_CUSTOM_URL:
         description: "Hanya untuk COMPILER=custom: URL archive (.tar.gz / .tar.xz / .zip) atau git repo"
         required: false
@@ -308,10 +308,15 @@ jobs:
               ;;
           esac
 
-          CLANG_BIN=$(find "$PWD/toolchain/clang" -maxdepth 4 -type f -name clang | head -n1 | xargs -r dirname)
-          [ -n "$CLANG_BIN" ] || { echo "::error::Binary clang tidak ditemukan di folder toolchain"; exit 1; }
-          echo "$CLANG_BIN" >> "$GITHUB_PATH"
-          echo "Toolchain disiapkan dari: $CLANG_BIN"
+          if [ -d "$PWD/toolchain/clang/bin" ]; then
+            CLANG_BIN="$PWD/toolchain/clang/bin"
+          else
+            CLANG_BIN=$(find "$PWD/toolchain/clang" -maxdepth 4 -type f -name clang | head -n1 | xargs -r dirname)
+          fi
+
+          [ -n "${CLANG_BIN}" ] || { echo "::error::Binary clang tidak ditemukan di folder toolchain"; exit 1; }
+          echo "${CLANG_BIN}" >> "$GITHUB_PATH"
+          echo "Toolchain disiapkan dari: ${CLANG_BIN}"
 
       - name: Cek toolchain
         run: |
@@ -448,6 +453,9 @@ jobs:
             if [ -n "$frag" ] && [ -f "$CFG_DIR/$frag" ]; then FILES+=("$CFG_DIR/$frag"); fi
           done
           scripts/kconfig/merge_config.sh -m -O "$OUT_DIR" "${FILES[@]}"
+
+          # Nonaktifkan stack protector strong jika compiler tidak mendukung
+          cfg -d CC_STACKPROTECTOR_STRONG || true
 
           # Konfigurasi LTO
           if [ "$LTO_MODE" != "none" ] && [ "$TARGET_ARCH" = "arm64" ]; then
