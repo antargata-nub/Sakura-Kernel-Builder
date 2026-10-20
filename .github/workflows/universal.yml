@@ -107,7 +107,7 @@ on:
         description: "Varian KernelSU (none = polos, 4.4/4.9 butuh backport manual di source)"
         required: true
         type: choice
-        options: [none, xxksu, ksu-next, ksu-original]
+        options: [none, xxksu, ksu-next, ksu-original, foxmiko-ksu]
         default: none
       KSU_ENABLE_MODULES:
         description: "Hanya ksu-next/original: aktifkan CONFIG_MODULES & KPROBES"
@@ -416,17 +416,25 @@ jobs:
           case "$KSU_VARIANT" in
             xxksu)
               URL="https://raw.githubusercontent.com/backslashxx/KernelSU/refs/heads/master/kernel/setup.sh"
-              REF="master" ;;
+              REF="master"
+              bash <(curl -fLsS "$URL") "$REF"
+              ;;
             ksu-next)
               URL="https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh"
-              REF="" ;;
+              bash <(curl -fLsS "$URL")
+              ;;
             ksu-original)
               URL="https://raw.githubusercontent.com/tiann/KernelSU/v0.6.6/kernel/setup.sh"
-              REF="v0.6.6" ;;
+              REF="v0.6.6"
+              bash <(curl -fLsS "$URL") "$REF"
+              ;;
+            foxmiko-ksu)
+              REF="main"
+              URL="https://raw.githubusercontent.com/FoxMiko-Labs/KernelSU/${REF}/kernel/setup.sh"
+              echo "Mengunduh dan menjalankan skrip dari FoxMiko-Labs/KernelSU..."
+              bash <(curl -fLsS "$URL") "$REF"
+              ;;
           esac
-
-          curl -fLsS -o /tmp/ksu_setup.sh "$URL"
-          if [ -n "$REF" ]; then bash /tmp/ksu_setup.sh "$REF"; else bash /tmp/ksu_setup.sh; fi
 
       - name: Build kernel
         working-directory: kernel
@@ -455,7 +463,7 @@ jobs:
             )
           fi
 
-          # Gabungkan KCFLAGS untuk Clang 13 dan EXTRA_KCFLAGS tambahan dengan aman
+          # Set KCFLAGS standar universal
           KCFLAGS_COMBINED="-Wno-error"
           if [ -n "$EXTRA_KCFLAGS" ]; then
             KCFLAGS_COMBINED="$KCFLAGS_COMBINED $EXTRA_KCFLAGS"
@@ -479,7 +487,7 @@ jobs:
           # Nonaktifkan stack protector strong jika compiler tidak mendukung
           cfg -d CC_STACKPROTECTOR_STRONG || true
 
-          # Nonaktifkan zero var init yang diblokir Clang 13
+          # Nonaktifkan zero var init yang diblokir Clang baru/strict
           cfg -d INIT_STACK_ALL_ZERO || true
           cfg -e INIT_STACK_NONE || true
 
@@ -496,8 +504,9 @@ jobs:
           # Konfigurasi KernelSU
           if [ "$KSU_VARIANT" != "none" ]; then
             cfg -e KSU
-            if [ "$KSU_VARIANT" = "xxksu" ]; then
-              cfg -d KSU_WITH_KPROBES -e KSU_TAMPER_SYSCALL_TABLE
+            if [ "$KSU_VARIANT" = "xxksu" ] || [ "$KSU_VARIANT" = "foxmiko-ksu" ]; then
+              cfg -d KPROBES -d HAVE_KPROBES -d KPROBE_EVENTS || true
+              cfg -e KSU_TAMPER_SYSCALL_TABLE
             else
               if [ "$KSU_ENABLE_MODULES" = "true" ]; then cfg -e MODULES; fi
               cfg -e KPROBES -e HAVE_KPROBES -e KPROBE_EVENTS -e OVERLAY_FS
@@ -528,6 +537,7 @@ jobs:
             xxksu)        KSU_TAG="-XXKSU" ;;
             ksu-next)     KSU_TAG="-KSUN" ;;
             ksu-original) KSU_TAG="-KSU" ;;
+            foxmiko-ksu)  KSU_TAG="-FoxMiko" ;;
             *)            KSU_TAG="" ;;
           esac
           BASE_NAME="${KERNEL_NAME}-${CODENAME}-${KVER}-${DATE}${KSU_TAG}"
@@ -576,7 +586,7 @@ jobs:
           }
           if [ "$MANAGER_AUTO" = "true" ]; then
             case "$KSU_VARIANT" in
-              ksu-next) latest KernelSU-Next/KernelSU-Next KernelSU-Next ;;
+              ksu-next|foxmiko-ksu) latest KernelSU-Next/KernelSU-Next KernelSU-Next ;;
               xxksu|ksu-original) latest tiann/KernelSU KernelSU ;;
             esac
           fi
