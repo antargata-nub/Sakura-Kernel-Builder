@@ -52,6 +52,14 @@ on:
         options:
           - zyc-clang-20
           - zyc-clang-19
+          - zyc-clang-18
+          - zyc-clang-17
+          - zyc-clang-16
+          - zyc-clang-15
+          - zyc-clang-14
+          - zyc-clang-13
+          - zyc-clang-12
+          - zyc-clang-11
           - proton-clang-13
           - aosp-clang-r41637b
           - greenforce-clang
@@ -68,7 +76,7 @@ on:
           - clang-12
           - clang-11
           - custom
-        default: proton-clang-13
+        default: zyc-clang-14
       CLANG_CUSTOM_URL:
         description: "Hanya untuk COMPILER=custom: URL archive (.tar.gz / .tar.xz / .zip) atau git repo"
         required: false
@@ -224,14 +232,14 @@ jobs:
           source /tmp/tg.sh
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           tg_msg "🚀 Build Dimulai
-          Kernel   : ${KERNEL_NAME} (${CODENAME})
-          Source   : ${KERNEL_SOURCE} @ ${KERNEL_BRANCH}
-          Config   : ${KERNEL_CONFIG} ${KERNEL_FRAGMENT}
-          Arch     : ${TARGET_ARCH}
-          Compiler : ${COMPILER}
-          LTO      : ${LTO_MODE}
-          KernelSU : ${KSU_VARIANT}
-          Run      : ${RUN_URL}"
+          - Kernel   : ${KERNEL_NAME} (${CODENAME})
+          - Source   : ${KERNEL_SOURCE} @ ${KERNEL_BRANCH}
+          - Config   : ${KERNEL_CONFIG} ${KERNEL_FRAGMENT}
+          - Arch     : ${TARGET_ARCH}
+          - Compiler : ${COMPILER}
+          - LTO      : ${LTO_MODE}
+          - KernelSU : ${KSU_VARIANT}
+          - Run      : ${RUN_URL}"
 
       - name: Install dependensi
         run: |
@@ -248,6 +256,29 @@ jobs:
           mkdir -p toolchain/clang
 
           case "${COMPILER}" in
+            zyc-clang-*)
+              V="${COMPILER#zyc-clang-}"
+              echo "Mencari dan mengunduh ZyC Clang v${V}..."
+              
+              URL=$(curl -s "https://api.github.com/repos/ZyCromerZ/Clang/releases" | jq -r --arg v "$V" '
+                [ .[] | .assets[]? | select(.name | (contains($v) or contains("-$v.")) and (endswith(".tar.xz") or endswith(".tar.gz") or endswith(".tar.zst"))) ] | .[0].browser_download_url // empty
+              ')
+              if [ -z "${URL}" ] || [ "${URL}" = "null" ]; then
+                URL=$(curl -s "https://api.github.com/repos/ZyCromerZ/Clang/releases/latest" | jq -r --arg v "$V" '
+                  [ .assets[]? | select(.name | (contains($v) or contains("-$v.")) and (endswith(".tar.xz") or endswith(".tar.gz") or endswith(".tar.zst"))) ] | .[0].browser_download_url // empty
+                ')
+              fi
+
+              [ -n "${URL}" ] && [ "${URL}" != "null" ] || { echo "::error::Gagal menemukan URL download untuk ZyC Clang v$V"; exit 1; }
+              echo "Mengunduh dari: ${URL}"
+
+              case "$URL" in
+                *.tar.xz)        curl -fLsS "$URL" | tar -xJ -C toolchain/clang ;;
+                *.tar.gz|*.tgz)  curl -fLsS "$URL" | tar -xz -C toolchain/clang ;;
+                *.tar.zst)       curl -fLsS "$URL" | tar --zstd -x -C toolchain/clang ;;
+                *)               curl -fLsS "$URL" | tar -x -C toolchain/clang ;;
+              endcase
+              ;;
             proton-clang-13)
               echo "Mengunduh Proton Clang 13..."
               git clone --depth=1 https://github.com/kdrag0n/proton-clang.git toolchain/clang
@@ -256,22 +287,6 @@ jobs:
               echo "Mengunduh AOSP Clang r41637b..."
               git clone --depth=1 https://github.com/PoomSmart/aosp-clang.git -b r41637b toolchain/clang || \
               git clone --depth=1 https://github.com/aosp-realm/clang-r41637b.git toolchain/clang
-              ;;
-            zyc-clang-20)
-              echo "Mengunduh ZyC Clang 20..."
-              URL=$(curl -s https://api.github.com/repos/ZyCromerZ/Clang/releases/latest | jq -r '.assets[]? | select(.name | contains("ZyC-Clang-20")) | .browser_download_url' | head -n1)
-              if [ -z "${URL}" ] || [ "${URL}" = "null" ]; then
-                URL=$(curl -s https://api.github.com/repos/ZyCromerZ/Clang/releases | jq -r '.[].assets[]? | select(.name | contains("ZyC-Clang-20")) | .browser_download_url' | head -n1)
-              fi
-              curl -fLsS "${URL}" | tar -xJ -C toolchain/clang
-              ;;
-            zyc-clang-19)
-              echo "Mengunduh ZyC Clang 19..."
-              URL=$(curl -s https://api.github.com/repos/ZyCromerZ/Clang/releases/tags/19.0.0-20240901 | jq -r '.assets[]? | select(.name | contains("ZyC-Clang-19")) | .browser_download_url' | head -n1)
-              if [ -z "${URL}" ] || [ "${URL}" = "null" ]; then
-                URL=$(curl -s https://api.github.com/repos/ZyCromerZ/Clang/releases | jq -r '.[].assets[]? | select(.name | contains("ZyC-Clang-19")) | .browser_download_url' | head -n1)
-              fi
-              curl -fLsS "${URL}" | tar -xJ -C toolchain/clang
               ;;
             greenforce-clang)
               echo "Mengunduh GreenForce Clang..."
