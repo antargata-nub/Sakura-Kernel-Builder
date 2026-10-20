@@ -188,7 +188,7 @@ jobs:
 
     steps:
       - name: Catat waktu mulai
-        run: echo "START_EPOCH=$(date +\%s)" >> "$GITHUB_ENV"
+        run: echo "START_EPOCH=$(date +%s)" >> "$GITHUB_ENV"
 
       - name: Telegram - siapkan helper
         if: ${{ env.BOT_TOKEN != '' && env.CHAT_ID != '' }}
@@ -225,8 +225,8 @@ jobs:
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           tg_msg "🚀 Build Dimulai
           - Kernel   : ${KERNEL_NAME} (${CODENAME})
-          - Source   : ${KERNEL_SOURCE} @${KERNEL_BRANCH}
-          - Config   : ${KERNEL_CONFIG}${KERNEL_FRAGMENT}
+          - Source   : ${KERNEL_SOURCE} @ ${KERNEL_BRANCH}
+          - Config   : ${KERNEL_CONFIG} ${KERNEL_FRAGMENT}
           - Arch     : ${TARGET_ARCH}
           - Compiler : ${COMPILER}
           - LTO      : ${LTO_MODE}
@@ -247,7 +247,7 @@ jobs:
           set -euo pipefail
           mkdir -p toolchain/clang
 
-          case "$COMPILER" in
+          case "${COMPILER}" in
             proton-clang-13)
               echo "Mengunduh Proton Clang 13..."
               git clone --depth=1 https://github.com/kdrag0n/proton-clang.git toolchain/clang
@@ -260,18 +260,18 @@ jobs:
             zyc-clang-20)
               echo "Mengunduh ZyC Clang 20..."
               URL=$(curl -s https://api.github.com/repos/ZyCromerZ/Clang/releases/latest | jq -r '.assets[]? | select(.name | contains("ZyC-Clang-20")) | .browser_download_url' | head -n1)
-              if [ -z "$URL" ] \vert{}\vert{} [ "$URL" = "null" ]; then
+              if [ -z "${URL}" ] || [ "${URL}" = "null" ]; then
                 URL=$(curl -s https://api.github.com/repos/ZyCromerZ/Clang/releases | jq -r '.[].assets[]? | select(.name | contains("ZyC-Clang-20")) | .browser_download_url' | head -n1)
               fi
-              curl -fLsS "$URL" | tar -xJ -C toolchain/clang
+              curl -fLsS "${URL}" | tar -xJ -C toolchain/clang
               ;;
             zyc-clang-19)
               echo "Mengunduh ZyC Clang 19..."
               URL=$(curl -s https://api.github.com/repos/ZyCromerZ/Clang/releases/tags/19.0.0-20240901 | jq -r '.assets[]? | select(.name | contains("ZyC-Clang-19")) | .browser_download_url' | head -n1)
-              if [ -z "$URL" ] \vert{}\vert{} [ "$URL" = "null" ]; then
+              if [ -z "${URL}" ] || [ "${URL}" = "null" ]; then
                 URL=$(curl -s https://api.github.com/repos/ZyCromerZ/Clang/releases | jq -r '.[].assets[]? | select(.name | contains("ZyC-Clang-19")) | .browser_download_url' | head -n1)
               fi
-              curl -fLsS "$URL" | tar -xJ -C toolchain/clang
+              curl -fLsS "${URL}" | tar -xJ -C toolchain/clang
               ;;
             greenforce-clang)
               echo "Mengunduh GreenForce Clang..."
@@ -279,22 +279,346 @@ jobs:
               git clone --depth=1 https://github.com/StatiXOS/android_prebuilts_clang_host_linux-x86_clang-r41637b.git toolchain/clang
               ;;
             custom)
-              [ -n "$CLANG_CUSTOM_URL" ] || { echo "::error::COMPILER=custom tapi CLANG_CUSTOM_URL kosong"; exit 1; }
-              case "$CLANG_CUSTOM_URL" in
-                *.tar.gz|*.tgz) curl -fLsS "$CLANG_CUSTOM_URL" | tar -xz -C toolchain/clang ;;
-                *.tar.xz)        curl -fLsS "$CLANG_CUSTOM_URL" | tar -xJ -C toolchain/clang ;;
-                *.tar.zst)       curl -fLsS "$CLANG_CUSTOM_URL" | tar --zstd -x -C toolchain/clang ;;
+              [ -n "${CLANG_CUSTOM_URL}" ] || { echo "::error::COMPILER=custom tapi CLANG_CUSTOM_URL kosong"; exit 1; }
+              case "${CLANG_CUSTOM_URL}" in
+                *.tar.gz|*.tgz) curl -fLsS "${CLANG_CUSTOM_URL}" | tar -xz -C toolchain/clang ;;
+                *.tar.xz)        curl -fLsS "${CLANG_CUSTOM_URL}" | tar -xJ -C toolchain/clang ;;
+                *.tar.zst)       curl -fLsS "${CLANG_CUSTOM_URL}" | tar --zstd -x -C toolchain/clang ;;
                 *.zip)
-                  curl -fLsS -o /tmp/toolchain.zip "$CLANG_CUSTOM_URL"
+                  curl -fLsS -o /tmp/toolchain.zip "${CLANG_CUSTOM_URL}"
                   unzip -q /tmp/toolchain.zip -d toolchain/clang ;;
                 *)
-                  if [ -n "$CLANG_CUSTOM_BRANCH" ]; then
-                    git clone --depth=1 -b "$CLANG_CUSTOM_BRANCH" "$CLANG_CUSTOM_URL" toolchain/clang
+                  if [ -n "${CLANG_CUSTOM_BRANCH}" ]; then
+                    git clone --depth=1 -b "${CLANG_CUSTOM_BRANCH}" "${CLANG_CUSTOM_URL}" toolchain/clang
                   else
-                    git clone --depth=1 "$CLANG_CUSTOM_URL" toolchain/clang
+                    git clone --depth=1 "${CLANG_CUSTOM_URL}" toolchain/clang
                   fi ;;
               esac
               ;;
             clang-*)
               V="${COMPILER#clang-}"
-              if ! sudo apt-get install -y --no-install-recommends "clang-$V" "lld-$V" "llvm
+              if ! sudo apt-get install -y --no-install-recommends "clang-$V" "lld-$V" "llvm-$V"; then
+                wget -q https://apt.llvm.org/llvm.sh
+                chmod +x llvm.sh
+                sudo ./llvm.sh "$V" all || { echo "::error::clang-$V tidak tersedia. Coba ganti RUNNER atau versi compiler lain."; exit 1; }
+              fi
+              echo "/usr/lib/llvm-$V/bin" >> "$GITHUB_PATH"
+              echo "Menggunakan System Clang $V"
+              exit 0
+              ;;
+          esac
+
+          CLANG_BIN=$(find "$PWD/toolchain/clang" -maxdepth 4 -type f -name clang | head -n1 | xargs -r dirname)
+          [ -n "$CLANG_BIN" ] || { echo "::error::Binary clang tidak ditemukan di folder toolchain"; exit 1; }
+          echo "$CLANG_BIN" >> "$GITHUB_PATH"
+          echo "Toolchain disiapkan dari: $CLANG_BIN"
+
+      - name: Cek toolchain
+        run: |
+          missing=0
+          for t in clang ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-strip \
+                   aarch64-linux-gnu-gcc arm-linux-gnueabi-gcc; do
+            if command -v "$t" >/dev/null; then echo "ok      $t -> $(command -v "$t")"
+            else echo "::error::Tidak ditemukan: $t"; missing=1; fi
+          done
+          [ "$missing" = 0 ] || { echo "Toolchain tidak lengkap (untuk custom: pastikan bundel memuat lld dan llvm-*)"; exit 1; }
+          clang --version | head -1
+          ld.lld --version
+
+      - name: Clone source kernel
+        run: |
+          git clone --depth=1 --recurse-submodules --shallow-submodules \
+            -b "$KERNEL_BRANCH" "$KERNEL_SOURCE" kernel
+          cd kernel
+          if git submodule status | grep -qE '^-'; then
+            git submodule update --init --recursive
+          fi
+          echo "KERNEL_COMMIT=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+
+      - name: Deteksi versi kernel dan profil
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          V=$(sed -n 's/^VERSION *= *//p' Makefile | head -n1 | tr -d ' ')
+          P=$(sed -n 's/^PATCHLEVEL *= *//p' Makefile | head -n1 | tr -d ' ')
+          S=$(sed -n 's/^SUBLEVEL *= *//p' Makefile | head -n1 | tr -d ' ')
+          KVER="${V}.${P}"
+          echo "KVER=${KVER}" >> "$GITHUB_ENV"
+          echo "KFULL=${V}.${P}.${S}" >> "$GITHUB_ENV"
+          echo "Versi kernel terdeteksi: ${V}.${P}.${S}"
+
+          # Patch yylloc untuk dtc (kernel 4.4/4.9 + GCC/Clang baru)
+          for f in scripts/dtc/dtc-lexer.lex.c_shipped scripts/dtc/dtc-lexer.l; do
+            if [ -f "$f" ] && grep -q '^YYLTYPE yylloc;' "$f"; then
+              sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/' "$f"
+              echo "Patch yylloc diterapkan: $f"
+            fi
+          done
+
+      - name: Terapkan patch manual hook KSU
+        if: ${{ inputs.KSU_VARIANT == 'ksu-next' || inputs.KSU_VARIANT == 'ksu-original' }}
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          URL="${KSU_PATCH_URL:-}"
+          if [ -z "$URL" ]; then
+            case "$KVER" in
+              4.14|4.19)
+                URL="https://raw.githubusercontent.com/kucingoranye/kernel_patches/main/manual_hook-rksu-ksun/kernel-4.19_5.4.patch" ;;
+              *)
+                echo "::warning::Tidak ada patch bawaan KSU untuk kernel ${KVER}. Melewati tahap patch."
+                exit 0 ;;
+            esac
+          fi
+          echo "Mengunduh patch KSU: $URL"
+          curl -fLsS -o /tmp/ksun.patch "$URL"
+          patch -p1 -N --no-backup-if-mismatch < /tmp/ksun.patch || true
+
+      - name: Validasi config
+        working-directory: kernel
+        run: |
+          CFG_DIR="arch/${TARGET_ARCH}/configs"
+          if [ ! -f "$CFG_DIR/$KERNEL_CONFIG" ]; then
+            echo "::error::$CFG_DIR/$KERNEL_CONFIG tidak ditemukan"
+            exit 1
+          fi
+
+      - name: Integrasi KernelSU
+        if: ${{ inputs.KSU_VARIANT != 'none' }}
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          if [ -d drivers/kernelsu ] || [ -d KernelSU ] || grep -qi "kernelsu" drivers/Kconfig drivers/Makefile 2>/dev/null; then
+            echo "::error::Source ini sudah memuat KernelSU! Pilih KSU_VARIANT=none."
+            exit 1
+          fi
+
+          case "$KSU_VARIANT" in
+            xxksu)
+              URL="https://raw.githubusercontent.com/backslashxx/KernelSU/refs/heads/master/kernel/setup.sh"
+              REF="master" ;;
+            ksu-next)
+              URL="https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh"
+              REF="" ;;
+            ksu-original)
+              URL="https://raw.githubusercontent.com/tiann/KernelSU/v0.6.6/kernel/setup.sh"
+              REF="v0.6.6" ;;
+          esac
+
+          curl -fLsS -o /tmp/ksu_setup.sh "$URL"
+          if [ -n "$REF" ]; then bash /tmp/ksu_setup.sh "$REF"; else bash /tmp/ksu_setup.sh; fi
+
+      - name: Build kernel
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          exec > >(tee -a build-full.log) 2>&1
+          OUT_DIR=out
+          CFG_DIR="arch/${TARGET_ARCH}/configs"
+
+          export ARCH="$TARGET_ARCH" SUBARCH="$TARGET_ARCH"
+          MAKE_ARGS=(
+            O="$OUT_DIR" ARCH="$TARGET_ARCH" SUBARCH="$TARGET_ARCH"
+            CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm
+            OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
+          )
+          if [ "$TARGET_ARCH" = "arm64" ]; then
+            MAKE_ARGS+=(
+              CROSS_COMPILE=aarch64-linux-gnu-
+              CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+              CLANG_TRIPLE=aarch64-linux-gnu-
+            )
+          else
+            MAKE_ARGS+=(
+              CROSS_COMPILE=arm-linux-gnueabi-
+              CLANG_TRIPLE=arm-linux-gnueabi-
+            )
+          fi
+          if [ -n "$EXTRA_KCFLAGS" ]; then MAKE_ARGS+=(KCFLAGS="$EXTRA_KCFLAGS"); fi
+          if [ -n "$EXTRA_MAKE_ARGS" ]; then
+            read -r -a EXTRA_ARR <<< "$EXTRA_MAKE_ARGS"
+            MAKE_ARGS+=("${EXTRA_ARR[@]}")
+          fi
+
+          cfg() { scripts/config --file "$OUT_DIR/.config" "$@"; }
+
+          mkdir -p "$OUT_DIR"
+          FILES=("$CFG_DIR/$KERNEL_CONFIG")
+          for frag in $KERNEL_FRAGMENT; do
+            if [ -n "$frag" ] && [ -f "$CFG_DIR/$frag" ]; then FILES+=("$CFG_DIR/$frag"); fi
+          done
+          scripts/kconfig/merge_config.sh -m -O "$OUT_DIR" "${FILES[@]}"
+
+          # Konfigurasi LTO
+          if [ "$LTO_MODE" != "none" ] && [ "$TARGET_ARCH" = "arm64" ]; then
+            case "$LTO_MODE" in
+              thin) cfg -e THINLTO -e LTO_CLANG_THIN -d LTO_CLANG_FULL ;;
+              full) cfg -e LTO_CLANG -e LTO_CLANG_FULL -d THINLTO ;;
+            esac
+          else
+            cfg -d LTO_CLANG -d THINLTO -d LTO_CLANG_THIN -d LTO_CLANG_FULL
+          fi
+
+          # Konfigurasi KernelSU
+          if [ "$KSU_VARIANT" != "none" ]; then
+            cfg -e KSU
+            if [ "$KSU_VARIANT" = "xxksu" ]; then
+              cfg -d KSU_WITH_KPROBES -e KSU_TAMPER_SYSCALL_TABLE
+            else
+              if [ "$KSU_ENABLE_MODULES" = "true" ]; then cfg -e MODULES; fi
+              cfg -e KPROBES -e HAVE_KPROBES -e KPROBE_EVENTS -e OVERLAY_FS
+            fi
+          fi
+
+          make "${MAKE_ARGS[@]}" olddefconfig
+          make -j"$(nproc)" "${MAKE_ARGS[@]}" 2>&1 | tee build.log
+
+          BOOT="$OUT_DIR/arch/${TARGET_ARCH}/boot"
+          if [ "$TARGET_ARCH" = "arm64" ]; then
+            CANDIDATES="Image.gz-dtb Image.lz4-dtb Image.gz Image.lz4 Image"
+          else
+            CANDIDATES="zImage-dtb zImage"
+          fi
+          IMG=""
+          for f in $CANDIDATES; do
+            if [ -f "$BOOT/$f" ]; then IMG="$BOOT/$f"; break; fi
+          done
+          [ -n "$IMG" ] || { echo "::error::Binary Image kernel tidak ditemukan di $BOOT"; exit 1; }
+          echo "IMG_PATH=$(pwd)/$IMG" >> "$GITHUB_ENV"
+          if [ -f "$BOOT/dtbo.img" ]; then echo "DTBO_PATH=$(pwd)/$BOOT/dtbo.img" >> "$GITHUB_ENV"; fi
+
+      - name: Siapkan nama dan folder hasil
+        run: |
+          DATE=$(date +%Y%m%d)
+          case "$KSU_VARIANT" in
+            xxksu)        KSU_TAG="-XXKSU" ;;
+            ksu-next)     KSU_TAG="-KSUN" ;;
+            ksu-original) KSU_TAG="-KSU" ;;
+            *)            KSU_TAG="" ;;
+          esac
+          BASE_NAME="${KERNEL_NAME}-${CODENAME}-${KVER}-${DATE}${KSU_TAG}"
+          echo "BASE_NAME=${BASE_NAME}" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=build-${{ github.run_id }}" >> "$GITHUB_ENV"
+          mkdir -p dist
+          cp "$IMG_PATH" "dist/${BASE_NAME}-$(basename "$IMG_PATH")"
+
+      - name: Kemas AnyKernel3
+        if: ${{ inputs.BUILD_ANYKERNEL3 }}
+        run: |
+          set -euo pipefail
+          if [ -n "$AK3_REPO" ]; then
+            git clone --depth=1 "$AK3_REPO" AnyKernel3
+          else
+            git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel3
+          fi
+          rm -rf AnyKernel3/.git AnyKernel3/*.zip
+          cp "$IMG_PATH" AnyKernel3/
+          if [ -n "${DTBO_PATH:-}" ] && [ -f "$DTBO_PATH" ]; then
+            cp "$DTBO_PATH" AnyKernel3/
+          fi
+
+          if [ -z "$AK3_REPO" ]; then
+            AKS=AnyKernel3/anykernel.sh
+            sed -i "s|^kernel.string=.*|kernel.string=${BASE_NAME}|" "$AKS"
+            sed -i "s/^device.name1=.*/device.name1=${CODENAME}/" "$AKS"
+            for n in 2 3 4 5; do sed -i "s|^device.name${n}=.*|device.name${n}=|" "$AKS"; done
+            sed -i -E "s#^(BLOCK|block)=.*#\1=${AK3_BLOCK};#" "$AKS"
+            sed -i -E "s#^(IS_SLOT_DEVICE|is_slot_device)=.*#\1=${AK3_SLOT_DEVICE};#" "$AKS"
+            sed -i -E 's#^dump_boot;#split_boot;#; s#^write_boot;#flash_boot;#' "$AKS"
+          fi
+
+          (cd AnyKernel3 && zip -r9 "../dist/${BASE_NAME}.zip" . -x ".git*" -x "*.zip")
+
+      - name: Unduh manager APK
+        run: |
+          set -uo pipefail
+          mkdir -p dist
+          latest() {
+            local api tag url
+            api=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$1/releases/latest") || return 0
+            tag=$(jq -r '.tag_name' <<<"$api")
+            url=$(jq -r '[.assets[]? | select(.name|test("\\.apk$")) | select(.name|test("debug";"i")|not)][0].browser_download_url // empty' <<<"$api")
+            [ -n "$url" ] && curl -fLsS -o "dist/Manager-$2-${tag}.apk" "$url" || true
+          }
+          if [ "$MANAGER_AUTO" = "true" ]; then
+            case "$KSU_VARIANT" in
+              ksu-next) latest KernelSU-Next/KernelSU-Next KernelSU-Next ;;
+              xxksu|ksu-original) latest tiann/KernelSU KernelSU ;;
+            esac
+          fi
+
+          EXTRA=",$(echo "$MGR_EXTRA" | tr 'A-Z' 'a-z' | tr -d ' '),"
+          case "$EXTRA" in *,original,*) latest tiann/KernelSU KernelSU ;; esac
+          case "$EXTRA" in *,next,*)     latest KernelSU-Next/KernelSU-Next KernelSU-Next ;; esac
+          case "$EXTRA" in *,rksu,*)     latest rsuntk/KernelSU RKSU ;; esac
+          case "$EXTRA" in *,kowsu,*)    latest KOWX712/KernelSU KowSU ;; esac
+
+      - name: Upload artifact hasil
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BASE_NAME }}
+          path: dist/*
+
+      - name: Upload log build
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: |
+            kernel/build-full.log
+            kernel/build.log
+          if-no-files-found: ignore
+
+      - name: Publish ke GitHub Release
+        if: ${{ inputs.PUBLISH_RELEASE }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.BASE_NAME }}
+          body: |
+            Kernel: ${{ env.KERNEL_NAME }} (${{ env.KFULL }})
+            Device: ${{ env.CODENAME }} | Arch: ${{ env.TARGET_ARCH }}
+            Compiler: ${{ env.COMPILER }} | LTO: ${{ env.LTO_MODE }}
+            KernelSU: ${{ env.KSU_VARIANT }}
+            Commit source: ${{ env.KERNEL_COMMIT }}
+          files: dist/*
+
+      - name: Telegram - sukses (hasil + log)
+        if: ${{ success() && env.BOT_TOKEN != '' && env.CHAT_ID != '' }}
+        continue-on-error: true
+        run: |
+          source /tmp/tg.sh
+          ELAPSED=$(( $(date +%s) - START_EPOCH ))
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          tg_msg "✅ Build BERHASIL: ${BASE_NAME}
+          Kernel   : ${KFULL}
+          Compiler : ${COMPILER}
+          LTO      : ${LTO_MODE}
+          KernelSU : ${KSU_VARIANT}
+          Durasi   : $((ELAPSED/60))m $((ELAPSED%60))s
+          Run      : ${RUN_URL}"
+          for f in dist/*; do
+            tg_file "$f" "$(basename "$f") ($(du -h "$f" | cut -f1))"
+          done
+          LOG=kernel/build-full.log
+          [ -f "$LOG" ] || LOG=kernel/build.log
+          if [ -f "$LOG" ]; then
+            sleep 2
+            gzip -9 -c "$LOG" > build-log.gz
+            tg_file build-log.gz "Log lengkap (gzip)"
+          fi
+
+      - name: Telegram - gagal (log)
+        if: ${{ failure() && env.BOT_TOKEN != '' && env.CHAT_ID != '' }}
+        continue-on-error: true
+        run: |
+          source /tmp/tg.sh
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          tg_msg "❌ Build GAGAL: ${KERNEL_NAME} (${CODENAME})
+          Cek log di: ${RUN_URL}"
+          LOG=kernel/build-full.log
+          [ -f "$LOG" ] || LOG=kernel/build.log
+          if [ -f "$LOG" ]; then
+            gzip -9 -c "$LOG" > build-log-failed.gz
+            tg_file build-log-failed.gz "Log error (gzip)"
+          fi
