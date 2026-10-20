@@ -456,7 +456,7 @@ jobs:
           fi
 
           # Gabungkan KCFLAGS untuk Clang 13 dan EXTRA_KCFLAGS tambahan dengan aman
-          KCFLAGS_COMBINED="-Wno-error -mllvm -enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang"
+          KCFLAGS_COMBINED="-Wno-error"
           if [ -n "$EXTRA_KCFLAGS" ]; then
             KCFLAGS_COMBINED="$KCFLAGS_COMBINED $EXTRA_KCFLAGS"
           fi
