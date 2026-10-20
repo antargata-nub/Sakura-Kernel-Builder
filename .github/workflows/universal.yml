@@ -224,14 +224,14 @@ jobs:
           source /tmp/tg.sh
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           tg_msg "🚀 Build Dimulai
-          - Kernel   : ${KERNEL_NAME} (${CODENAME})
-          - Source   : ${KERNEL_SOURCE} @ ${KERNEL_BRANCH}
-          - Config   : ${KERNEL_CONFIG} ${KERNEL_FRAGMENT}
-          - Arch     : ${TARGET_ARCH}
-          - Compiler : ${COMPILER}
-          - LTO      : ${LTO_MODE}
-          - KernelSU : ${KSU_VARIANT}
-          - Run      : ${RUN_URL}"
+          Kernel   : ${KERNEL_NAME} (${CODENAME})
+          Source   : ${KERNEL_SOURCE} @ ${KERNEL_BRANCH}
+          Config   : ${KERNEL_CONFIG} ${KERNEL_FRAGMENT}
+          Arch     : ${TARGET_ARCH}
+          Compiler : ${COMPILER}
+          LTO      : ${LTO_MODE}
+          KernelSU : ${KSU_VARIANT}
+          Run      : ${RUN_URL}"
 
       - name: Install dependensi
         run: |
@@ -434,8 +434,14 @@ jobs:
               CLANG_TRIPLE=aarch64-linux-gnu-
             )
           else
-          
-            KCFLAGS_COMBINED="-Wno-error -mllvm -enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang"
+            MAKE_ARGS+=(
+              CROSS_COMPILE=arm-linux-gnueabi-
+              CLANG_TRIPLE=arm-linux-gnueabi-
+            )
+          fi
+
+          # Gabungkan KCFLAGS untuk Clang 13 dan EXTRA_KCFLAGS tambahan dengan aman
+          KCFLAGS_COMBINED="-Wno-error -mllvm -enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang"
           if [ -n "$EXTRA_KCFLAGS" ]; then
             KCFLAGS_COMBINED="$KCFLAGS_COMBINED $EXTRA_KCFLAGS"
           fi
@@ -613,8 +619,7 @@ jobs:
           [ -f "$LOG" ] || LOG=kernel/build.log
           if [ -f "$LOG" ]; then
             sleep 2
-            gzip -9 -c "$LOG" > build-log.gz
-            tg_file build-log.gz "Log lengkap (gzip)"
+            tg_file "$LOG" "Log lengkap build (mentah)"
           fi
 
       - name: Telegram - gagal (log)
@@ -628,6 +633,5 @@ jobs:
           LOG=kernel/build-full.log
           [ -f "$LOG" ] || LOG=kernel/build.log
           if [ -f "$LOG" ]; then
-            gzip -9 -c "$LOG" > build-log-failed.gz
-            tg_file build-log-failed.gz "Log error (gzip)"
+            tg_file "$LOG" "Log error build (mentah)"
           fi
